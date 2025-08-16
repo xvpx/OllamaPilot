@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Ollama</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🦙 Chat Ollama</h1>
+            <div class="header-right">
+                <div class="status-indicator">
+                    <span id="status-dot" class="status-dot"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+                <button id="settings-btn" class="settings-btn" title="Settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="chat-container">
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h3>Chat Sessions</h3>
+                </div>
+                <div id="sessions-list" class="sessions-list">
+                    <!-- Sessions will be loaded here -->
+                </div>
+            </div>
+
+            <div class="chat-main">
+                <div id="chat-messages" class="chat-messages">
+                    <div class="welcome-message">
+                        <h2>Welcome to Chat Ollama!</h2>
+                        <p>Start a conversation with your local LLM. Your messages are saved and you can continue conversations anytime.</p>
+                    </div>
+                </div>
+
+                <div class="chat-input-container">
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="message-input" 
+                            placeholder="Type your message here... (Press Ctrl+Enter to send)"
+                            rows="1"
+                        ></textarea>
+                        <button id="send-btn" class="send-btn" disabled>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="input-options">
+                        <label for="model-select">Model:</label>
+                        <select id="model-select">
+                            <option value="">Loading models...</option>
+                        </select>
+                        <label>
+                            <input type="checkbox" id="streaming-toggle" checked>
+                            Streaming
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="settings-modal">
+        <div class="settings-content">
+            <div class="settings-header">
+                <h3>Settings</h3>
+                <button id="close-settings" class="close-btn">×</button>
+            </div>
+            <div class="settings-body">
+                <div class="setting-group">
+                    <h4>Chat Settings</h4>
+                    <div class="setting-item">
+                        <label for="default-streaming">
+                            <input type="checkbox" id="default-streaming" checked>
+                            Enable streaming by default
+                        </label>
+                    </div>
+                    <div class="setting-item">
+                        <label for="auto-scroll">
+                            <input type="checkbox" id="auto-scroll" checked>
+                            Auto-scroll to new messages
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <h4>Interface</h4>
+                    <div class="setting-item">
+                        <label for="theme-select">Theme:</label>
+                        <select id="theme-select">
+                            <option value="light">Light</option>
+                            <option value="dark">Dark</option>
+                            <option value="auto">Auto</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="sidebar-width">Sidebar Width:</label>
+                        <select id="sidebar-width">
+                            <option value="250">Narrow (250px)</option>
+                            <option value="300" selected>Default (300px)</option>
+                            <option value="350">Wide (350px)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <h4>Model Settings</h4>
+                    <div class="setting-item">
+                        <label for="temperature-slider">Temperature: <span id="temperature-value">0.7</span></label>
+                        <input type="range" id="temperature-slider" min="0" max="2" step="0.1" value="0.7">
+                    </div>
+                    <div class="setting-item">
+                        <label for="max-tokens">Max Tokens:</label>
+                        <input type="number" id="max-tokens" min="1" max="4096" value="2048">
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <h4>Model Management</h4>
+                    <div class="setting-item">
+                        <button id="sync-models-btn" class="action-btn">🔄 Sync Models</button>
+                        <button id="refresh-models-btn" class="action-btn">↻ Refresh</button>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <label for="model-download-input">Download Model:</label>
+                        <div class="download-input-group">
+                            <input type="text" id="model-download-input" placeholder="e.g., llama3.2:3b, mistral:7b, codellama:13b" class="model-input">
+                            <button id="download-model-btn" class="action-btn primary">📥 Pull Model</button>
+                        </div>
+                    </div>
+                    
+                    <div class="setting-item">
+                        <button id="show-available-models-btn" class="action-btn">📋 Browse Available Models</button>
+                        <button id="refresh-available-models-btn" class="action-btn">🔄 Refresh List</button>
+                    </div>
+                    
+                    <div id="available-models-panel" class="available-models-panel">
+                        <div class="available-models-header">
+                            <h5>Available Models</h5>
+                            <button id="hide-available-models-btn" class="close-btn">×</button>
+                        </div>
+                        <div class="available-models-search">
+                            <div class="search-input-wrapper">
+                                <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                                <input type="text" id="model-search-input" placeholder="Search models by name, category, or description..." class="model-search-input">
+                                <button id="clear-search-btn" class="clear-search-btn" title="Clear search">×</button>
+                            </div>
+                        </div>
+                        <div id="available-models-list" class="available-models-list">
+                            <div class="loading-spinner"></div>
+                            Loading available models...
+                        </div>
+                    </div>
+                    
+                    <div id="download-status" class="download-status" style="display: none;">
+                        <div class="download-progress">
+                            <div class="progress-bar">
+                                <div id="progress-fill" class="progress-fill"></div>
+                            </div>
+                            <div id="download-text" class="download-text">Preparing download...</div>
+                        </div>
+                    </div>
+                    
+                    <div class="models-container">
+                        <div id="models-list" class="models-list-settings">
+                            <!-- Installed models will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="setting-group">
+                    <h4>Actions</h4>
+                    <div class="setting-item">
+                        <button id="clear-all-sessions" class="action-btn danger">Clear All Chat Sessions</button>
+                    </div>
+                    <div class="setting-item">
+                        <button id="export-settings" class="action-btn">Export Settings</button>
+                        <button id="import-settings" class="action-btn">Import Settings</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
