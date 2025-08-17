@@ -433,8 +433,6 @@ func (m *ModelManager) deleteModelFromDatabase(ctx context.Context, id string) e
 	}
 
 	// Delete the model itself
-	// Note: model_usage_stats is a VIEW, so it will automatically update when the model is deleted
-	// The messages table references model by name, not ID, so no foreign key constraint issues
 	result, err := tx.ExecContext(ctx, "DELETE FROM models WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete model: %w", err)
@@ -625,7 +623,6 @@ func (m *ModelManager) UpdateModelConfig(ctx context.Context, modelID string, re
 	// Handle custom options if provided
 	if req.CustomOptions != nil {
 		// Store custom options as JSON in a separate operation if needed
-		// For now, we'll log this as it requires additional schema design
 		optionsJSON, _ := json.Marshal(req.CustomOptions)
 		m.logger.Info().
 			Str("model_id", modelID).
@@ -800,320 +797,6 @@ func (m *ModelManager) generateDisplayName(modelName string) string {
 	return strings.Join(words, " ")
 }
 
-// GetModelDetails retrieves comprehensive model information
-func (m *ModelManager) GetModelDetails(ctx context.Context, modelID string) (*models.ModelDetailsResponse, error) {
-	// Get model
-	model, err := m.GetModelByID(ctx, modelID)
-	if err != nil {
-		return nil, err
-	}
-
-	response := &models.ModelDetailsResponse{
-		Model: *model,
-	}
-
-	// Get config
-	config, err := m.GetModelConfig(ctx, modelID)
-	if err == nil {
-		response.Config = config
-	}
-
-	// Get usage stats
-	stats, err := m.GetModelUsageStats(ctx, modelID)
-	if err == nil {
-		response.Stats = stats
-	}
-
-	return response, nil
-}
-
-// DownloadModel downloads a model from Ollama and adds it to the database
-func (m *ModelManager) DownloadModel(ctx context.Context, req models.ModelDownloadRequest) (*models.ModelDownloadResponse, error) {
-	m.logger.Info().Str("model_name", req.Name).Msg("Starting model download")
-
-	// Check if model already exists
-	existingModel, err := m.GetModelByName(ctx, req.Name)
-	if err == nil && existingModel.Status == "available" {
-		return nil, fmt.Errorf("model %s already exists and is available", req.Name)
-	}
-
-	// Create model entry with downloading status
-	modelID := uuid.New().String()
-	displayName := req.DisplayName
-	if displayName == "" {
-		displayName = m.generateDisplayName(req.Name)
-	}
-	description := req.Description
-	if description == "" {
-		description = fmt.Sprintf("Model: %s", req.Name)
-	}
-
-	newModel := models.Model{
-		ID:          modelID,
-		Name:        req.Name,
-		DisplayName: displayName,
-		Description: description,
-		Status:      "downloading",
-		IsEnabled:   true,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-	}
-
-	// If model exists but is not available, update it instead of creating new
-	if existingModel != nil {
-		modelID = existingModel.ID
-		if err := m.updateModelStatus(ctx, modelID, "downloading"); err != nil {
-			return nil, fmt.Errorf("failed to update model status: %w", err)
-		}
-	} else {
-		if err := m.CreateModel(ctx, newModel); err != nil {
-			return nil, fmt.Errorf("failed to create model entry: %w", err)
-		}
-	}
-
-	// Start download in background
-	go func() {
-		downloadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-		defer cancel()
-
-		progressChan := make(chan models.ModelDownloadProgress, 100)
-		
-		// Start the download
-		downloadErr := m.ollamaClient.PullModel(downloadCtx, req.Name, progressChan)
-		
-		// Process progress updates
-		for progress := range progressChan {
-			m.logger.Debug().
-				Str("model", progress.ModelName).
-				Str("status", progress.Status).
-				Float64("percentage", progress.Percentage).
-				Msg("Download progress")
-
-			// Store progress for API retrieval
-			if progress.Percentage > 0 {
-				m.progressMutex.Lock()
-				m.downloadProgress[modelID] = progress.Percentage
-				m.progressMutex.Unlock()
-			}
-
-			if progress.Error != "" {
-				m.logger.Error().
-					Str("model", progress.ModelName).
-					Str("error", progress.Error).
-					Msg("Download error")
-				
-				// Clean up progress tracking
-				m.progressMutex.Lock()
-				delete(m.downloadProgress, modelID)
-				m.progressMutex.Unlock()
-				
-				// Update model status to error
-				if updateErr := m.updateModelStatus(context.Background(), modelID, "error"); updateErr != nil {
-					m.logger.Error().Err(updateErr).Msg("Failed to update model status to error")
-				}
-				return
-			}
-		}
-
-		if downloadErr != nil {
-			m.logger.Error().Err(downloadErr).Str("model", req.Name).Msg("Model download failed")
-			
-			// Update model status to error
-			if updateErr := m.updateModelStatus(context.Background(), modelID, "error"); updateErr != nil {
-				m.logger.Error().Err(updateErr).Msg("Failed to update model status to error")
-			}
-			return
-		}
-
-		// Download completed successfully, get model info and update database
-		modelInfo, infoErr := m.ollamaClient.GetModelInfo(downloadCtx, req.Name)
-		if infoErr != nil {
-			m.logger.Warn().Err(infoErr).Str("model", req.Name).Msg("Failed to get model info, but download succeeded")
-		}
-
-		// Update model with additional information
-		updateReq := models.ModelUpdateRequest{}
-		if modelInfo != nil {
-			if modelInfo.Details.Family != "" {
-				family := modelInfo.Details.Family
-				updateReq.Description = &family
-			}
-			if modelInfo.Details.ParameterSize != "" {
-				desc := fmt.Sprintf("%s - %s parameters", req.Name, modelInfo.Details.ParameterSize)
-				updateReq.Description = &desc
-			}
-		}
-
-		// Clean up progress tracking
-		m.progressMutex.Lock()
-		delete(m.downloadProgress, modelID)
-		m.progressMutex.Unlock()
-		
-		// Update model status to available
-		if updateErr := m.updateModelStatus(context.Background(), modelID, "available"); updateErr != nil {
-			m.logger.Error().Err(updateErr).Msg("Failed to update model status to available")
-		}
-
-		// Apply additional updates if we have model info
-		if updateReq.Description != nil {
-			if updateErr := m.UpdateModel(context.Background(), modelID, updateReq); updateErr != nil {
-				m.logger.Error().Err(updateErr).Msg("Failed to update model with additional info")
-			}
-		}
-
-		m.logger.Info().Str("model", req.Name).Msg("Model download completed successfully")
-	}()
-
-	response := &models.ModelDownloadResponse{
-		ID:      modelID,
-		Name:    req.Name,
-		Status:  "downloading",
-		Message: "Model download started",
-	}
-
-	return response, nil
-}
-
-// GetAvailableModelsFromOllama retrieves models available for download from Ollama library
-func (m *ModelManager) GetAvailableModelsFromOllama(ctx context.Context) ([]string, error) {
-	// Check if we have a valid cache
-	m.cacheMutex.RLock()
-	if len(m.availableModelsCache) > 0 && time.Since(m.cacheLastUpdated) < m.cacheTTL {
-		m.logger.Debug().
-			Time("cache_updated", m.cacheLastUpdated).
-			Int("cached_models", len(m.availableModelsCache)).
-			Msg("Using cached available models")
-		cachedModels := make([]string, len(m.availableModelsCache))
-		copy(cachedModels, m.availableModelsCache)
-		m.cacheMutex.RUnlock()
-		
-		// Still need to filter out installed models
-		return m.filterInstalledModels(ctx, cachedModels)
-	}
-	m.cacheMutex.RUnlock()
-
-	// Cache is empty or expired, fetch from Ollama library
-	m.logger.Info().Msg("Fetching available models from Ollama library")
-	
-	// Use the Ollama client to fetch models from the public library
-	availableModels, err := m.ollamaClient.GetLibraryModels(ctx)
-	if err != nil {
-		m.logger.Error().Err(err).Msg("Failed to fetch models from Ollama library, falling back to cached or basic list")
-		
-		// Try to use expired cache if available
-		m.cacheMutex.RLock()
-		if len(m.availableModelsCache) > 0 {
-			m.logger.Info().Msg("Using expired cache due to fetch failure")
-			cachedModels := make([]string, len(m.availableModelsCache))
-			copy(cachedModels, m.availableModelsCache)
-			m.cacheMutex.RUnlock()
-			return m.filterInstalledModels(ctx, cachedModels)
-		}
-		m.cacheMutex.RUnlock()
-		
-		// Fallback to a minimal list if no cache and fetch fails
-		availableModels = []string{
-			"llama3.2:1b",
-			"llama3.2:3b",
-			"llama3.1:8b",
-			"llama3.1:70b",
-			"mistral:7b",
-			"codellama:7b",
-			"phi3:mini",
-			"gemma:2b",
-			"gemma:7b",
-			"qwen2:0.5b",
-			"qwen2:1.5b",
-			"qwen2:7b",
-		}
-	}
-	
-	// Update cache with fresh data
-	m.cacheMutex.Lock()
-	m.availableModelsCache = make([]string, len(availableModels))
-	copy(m.availableModelsCache, availableModels)
-	m.cacheLastUpdated = time.Now()
-	m.cacheMutex.Unlock()
-	
-	m.logger.Info().
-		Int("models_found", len(availableModels)).
-		Time("cache_updated", m.cacheLastUpdated).
-		Msg("Retrieved and cached models from Ollama library")
-
-	return m.filterInstalledModels(ctx, availableModels)
-}
-
-// filterInstalledModels removes already installed models from the available list
-func (m *ModelManager) filterInstalledModels(ctx context.Context, availableModels []string) ([]string, error) {
-	// Filter out models that are already installed
-	installedModels, err := m.GetAllModels(ctx)
-	if err != nil {
-		return availableModels, nil // Return all if we can't check installed
-	}
-
-	installedMap := make(map[string]bool)
-	for _, model := range installedModels {
-		installedMap[model.Name] = true
-	}
-
-	var filteredModels []string
-	for _, model := range availableModels {
-		if !installedMap[model] {
-			filteredModels = append(filteredModels, model)
-		}
-	}
-
-	return filteredModels, nil
-}
-
-// RefreshAvailableModelsCache forces a refresh of the available models cache
-func (m *ModelManager) RefreshAvailableModelsCache(ctx context.Context) error {
-	m.logger.Info().Msg("Forcing refresh of available models cache")
-	
-	// Clear the cache to force a fresh fetch
-	m.cacheMutex.Lock()
-	m.availableModelsCache = nil
-	m.cacheLastUpdated = time.Time{}
-	m.cacheMutex.Unlock()
-	
-	// Fetch fresh data
-	_, err := m.GetAvailableModelsFromOllama(ctx)
-	return err
-}
-
-// GetCacheInfo returns information about the current cache state
-func (m *ModelManager) GetCacheInfo() map[string]interface{} {
-	m.cacheMutex.RLock()
-	defer m.cacheMutex.RUnlock()
-	
-	return map[string]interface{}{
-		"cached_models_count": len(m.availableModelsCache),
-		"last_updated":        m.cacheLastUpdated,
-		"ttl_hours":          m.cacheTTL.Hours(),
-		"is_expired":         time.Since(m.cacheLastUpdated) >= m.cacheTTL,
-		"time_until_expiry":  m.cacheTTL - time.Since(m.cacheLastUpdated),
-	}
-}
-
-// GetModelDownloadStatus retrieves the current download status of a model
-func (m *ModelManager) GetModelDownloadStatus(ctx context.Context, modelID string) (*models.Model, error) {
-	model, err := m.GetModelByID(ctx, modelID)
-	if err != nil {
-		return nil, err
-	}
-	
-	// Add progress information if downloading
-	if model.Status == "downloading" {
-		m.progressMutex.RLock()
-		if progress, exists := m.downloadProgress[modelID]; exists {
-			model.Progress = progress
-		}
-		m.progressMutex.RUnlock()
-	}
-	
-	return model, nil
-}
-
 // updateModelSize updates the size of a model
 func (m *ModelManager) updateModelSize(ctx context.Context, id string, size int64) error {
 	query := `UPDATE models SET size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
@@ -1135,9 +818,203 @@ func (m *ModelManager) updateModelSize(ctx context.Context, id string, size int6
 	return nil
 }
 
+// GetModelDetails retrieves detailed model information including config and stats
+func (m *ModelManager) GetModelDetails(ctx context.Context, modelID string) (*models.ModelDetailsResponse, error) {
+	// Get the model
+	model, err := m.GetModelByID(ctx, modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get model config
+	config, err := m.GetModelConfig(ctx, modelID)
+	if err != nil && err.Error() != "model config not found" {
+		m.logger.Warn().Err(err).Str("model_id", modelID).Msg("Failed to get model config")
+	}
+
+	// Get model stats
+	stats, err := m.GetModelUsageStats(ctx, modelID)
+	if err != nil {
+		m.logger.Warn().Err(err).Str("model_id", modelID).Msg("Failed to get model stats")
+	}
+
+	return &models.ModelDetailsResponse{
+		Model:  *model,
+		Config: config,
+		Stats:  stats,
+	}, nil
+}
+
+// DownloadModel initiates a model download
+func (m *ModelManager) DownloadModel(ctx context.Context, req models.ModelDownloadRequest) (*models.ModelDownloadResponse, error) {
+	// Check if model already exists
+	existingModel, err := m.GetModelByName(ctx, req.Name)
+	if err == nil && existingModel.Status == "available" {
+		return nil, fmt.Errorf("model %s already exists and is available", req.Name)
+	}
+
+	// Create or update model record
+	var modelID string
+	if existingModel != nil {
+		modelID = existingModel.ID
+		// Update status to downloading
+		if err := m.updateModelStatus(ctx, modelID, "downloading"); err != nil {
+			return nil, fmt.Errorf("failed to update model status: %w", err)
+		}
+	} else {
+		// Create new model record
+		newModel := models.Model{
+			ID:          uuid.New().String(),
+			Name:        req.Name,
+			DisplayName: req.DisplayName,
+			Description: req.Description,
+			Status:      "downloading",
+			IsEnabled:   true,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		}
+		
+		if newModel.DisplayName == "" {
+			newModel.DisplayName = m.generateDisplayName(req.Name)
+		}
+		if newModel.Description == "" {
+			newModel.Description = fmt.Sprintf("Model: %s", req.Name)
+		}
+
+		if err := m.CreateModel(ctx, newModel); err != nil {
+			return nil, fmt.Errorf("failed to create model record: %w", err)
+		}
+		modelID = newModel.ID
+	}
+
+	// Start download in background
+	go func() {
+		progressChan := make(chan models.ModelDownloadProgress, 100)
+		
+		// Start the download
+		go func() {
+			defer close(progressChan)
+			if err := m.ollamaClient.PullModel(context.Background(), req.Name, progressChan); err != nil {
+				m.logger.Error().Err(err).Str("model", req.Name).Msg("Model download failed")
+				m.updateModelStatus(context.Background(), modelID, "error")
+				return
+			}
+		}()
+
+		// Process progress updates
+		for progress := range progressChan {
+			m.progressMutex.Lock()
+			m.downloadProgress[modelID] = progress.Percentage
+			m.progressMutex.Unlock()
+
+			if progress.Status == "error" {
+				m.updateModelStatus(context.Background(), modelID, "error")
+				break
+			}
+			
+			// Check for completion
+			if progress.Percentage >= 100 || progress.Status == "success" {
+				m.updateModelStatus(context.Background(), modelID, "available")
+				
+				// Sync to get updated model info
+				m.SyncModels(context.Background())
+				break
+			}
+		}
+
+		// Clean up progress tracking
+		m.progressMutex.Lock()
+		delete(m.downloadProgress, modelID)
+		m.progressMutex.Unlock()
+	}()
+
+	return &models.ModelDownloadResponse{
+		ID:      modelID,
+		Name:    req.Name,
+		Status:  "downloading",
+		Message: "Model download started",
+	}, nil
+}
+
+// GetAvailableModelsFromOllama retrieves available models from Ollama library
+func (m *ModelManager) GetAvailableModelsFromOllama(ctx context.Context) ([]string, error) {
+	m.cacheMutex.RLock()
+	if time.Since(m.cacheLastUpdated) < m.cacheTTL && len(m.availableModelsCache) > 0 {
+		models := make([]string, len(m.availableModelsCache))
+		copy(models, m.availableModelsCache)
+		m.cacheMutex.RUnlock()
+		return models, nil
+	}
+	m.cacheMutex.RUnlock()
+
+	// Cache is stale or empty, refresh it
+	return m.refreshAvailableModelsCache(ctx)
+}
+
+// RefreshAvailableModelsCache refreshes the cache of available models
+func (m *ModelManager) RefreshAvailableModelsCache(ctx context.Context) error {
+	_, err := m.refreshAvailableModelsCache(ctx)
+	return err
+}
+
+// refreshAvailableModelsCache internal method to refresh cache
+func (m *ModelManager) refreshAvailableModelsCache(ctx context.Context) ([]string, error) {
+	m.logger.Info().Msg("Refreshing available models cache")
+
+	models, err := m.ollamaClient.GetLibraryModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get library models: %w", err)
+	}
+
+	m.cacheMutex.Lock()
+	m.availableModelsCache = models
+	m.cacheLastUpdated = time.Now()
+	m.cacheMutex.Unlock()
+
+	m.logger.Info().Int("model_count", len(models)).Msg("Available models cache refreshed")
+	return models, nil
+}
+
+// GetModelDownloadStatus retrieves download status for a model
+func (m *ModelManager) GetModelDownloadStatus(ctx context.Context, modelID string) (*models.Model, error) {
+	model, err := m.GetModelByID(ctx, modelID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add progress information if downloading
+	if model.Status == "downloading" {
+		m.progressMutex.RLock()
+		if progress, exists := m.downloadProgress[modelID]; exists {
+			model.Progress = progress
+		}
+		m.progressMutex.RUnlock()
+	}
+
+	return model, nil
+}
+
+// GetCacheInfo returns information about the models cache
+func (m *ModelManager) GetCacheInfo() map[string]interface{} {
+	m.cacheMutex.RLock()
+	defer m.cacheMutex.RUnlock()
+
+	return map[string]interface{}{
+		"cache_size":        len(m.availableModelsCache),
+		"last_updated":      m.cacheLastUpdated,
+		"cache_ttl_hours":   m.cacheTTL.Hours(),
+		"cache_valid":       time.Since(m.cacheLastUpdated) < m.cacheTTL,
+		"time_until_stale":  m.cacheTTL - time.Since(m.cacheLastUpdated),
+	}
+}
+
 // updateModelMetadata updates model metadata from Ollama info
 func (m *ModelManager) updateModelMetadata(ctx context.Context, id string, info models.OllamaModelDetailedInfo) error {
-	query := `UPDATE models SET family = ?, format = ?, parameters = ?, quantization = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	query := `
+		UPDATE models
+		SET family = ?, format = ?, parameters = ?, quantization = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`
 	
 	result, err := m.db.ExecContext(ctx, query, info.Family, info.Format, info.Parameters, info.Quantization, id)
 	if err != nil {

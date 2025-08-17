@@ -256,3 +256,46 @@ func (h *ChatHandler) GetSessionMessages(w http.ResponseWriter, r *http.Request)
 
 	utils.WriteSuccess(w, response)
 }
+
+// DeleteSession handles DELETE /v1/sessions/{sessionID}
+func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
+	logger := utils.FromContext(r.Context())
+	if logger == nil {
+		logger = h.logger
+	}
+
+	// Extract session ID from URL path
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		apiErr := utils.NewValidationError("Session ID is required", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	logger.Info().
+		Str("session_id", sessionID).
+		Msg("Deleting session")
+
+	err := h.chatService.DeleteSession(ctx, sessionID)
+	if err != nil {
+		logger.Error().Err(err).
+			Str("session_id", sessionID).
+			Msg("Failed to delete session")
+		apiErr := utils.NewInternalError("Failed to delete session", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	logger.Info().
+		Str("session_id", sessionID).
+		Msg("Session deleted successfully")
+
+	// Return success response
+	utils.WriteSuccess(w, map[string]string{
+		"message": "Session deleted successfully",
+		"session_id": sessionID,
+	})
+}

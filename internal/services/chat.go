@@ -449,3 +449,53 @@ func (s *ChatService) UpdateSessionTitle(ctx context.Context, sessionID, title s
 
 	return nil
 }
+
+// DeleteSession deletes a session and all its messages
+func (s *ChatService) DeleteSession(ctx context.Context, sessionID string) error {
+	// Start a transaction to ensure both session and messages are deleted atomically
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// First, delete all messages for this session
+	deleteMessagesQuery := `DELETE FROM messages WHERE session_id = ?`
+	result, err := tx.ExecContext(ctx, deleteMessagesQuery, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete session messages: %w", err)
+	}
+
+	messagesDeleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get messages deleted count: %w", err)
+	}
+
+	// Then, delete the session itself
+	deleteSessionQuery := `DELETE FROM sessions WHERE id = ?`
+	result, err = tx.ExecContext(ctx, deleteSessionQuery, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+
+	sessionsDeleted, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get sessions deleted count: %w", err)
+	}
+
+	if sessionsDeleted == 0 {
+		return fmt.Errorf("session not found")
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	s.logger.Info().
+		Str("session_id", sessionID).
+		Int64("messages_deleted", messagesDeleted).
+		Msg("Session and messages deleted successfully")
+
+	return nil
+}
