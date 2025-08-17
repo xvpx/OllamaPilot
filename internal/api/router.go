@@ -79,6 +79,7 @@ func (rt *Router) SetupRoutes() http.Handler {
 		// Session endpoints
 		r.Get("/sessions", chatHandler.GetSessions)
 		r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
+		r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
 		
 		// Model management handlers
 		modelsHandler := handlers.NewModelsHandler(rt.db, rt.cfg, rt.logger)

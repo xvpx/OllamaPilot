@@ -16,6 +16,7 @@ class ChatApp {
     }
 
     initializeElements() {
+        // Core elements (required)
         this.statusDot = document.getElementById('status-dot');
         this.statusText = document.getElementById('status-text');
         this.sessionsList = document.getElementById('sessions-list');
@@ -25,13 +26,14 @@ class ChatApp {
         this.sendBtn = document.getElementById('send-btn');
         this.modelSelect = document.getElementById('model-select');
         this.streamingToggle = document.getElementById('streaming-toggle');
+        this.newChatBtn = document.getElementById('new-chat-btn');
         
         // Settings elements
         this.settingsBtn = document.getElementById('settings-btn');
         this.settingsModal = document.getElementById('settings-modal');
         this.closeSettingsBtn = document.getElementById('close-settings');
         
-        // Settings form elements
+        // Settings form elements (with null checks)
         this.defaultStreamingToggle = document.getElementById('default-streaming');
         this.autoScrollToggle = document.getElementById('auto-scroll');
         this.themeSelect = document.getElementById('theme-select');
@@ -39,82 +41,122 @@ class ChatApp {
         this.temperatureSlider = document.getElementById('temperature-slider');
         this.temperatureValue = document.getElementById('temperature-value');
         this.maxTokensInput = document.getElementById('max-tokens');
+        
+        // Optional elements that may not exist
         this.clearAllSessionsBtn = document.getElementById('clear-all-sessions');
         this.exportSettingsBtn = document.getElementById('export-settings');
         this.importSettingsBtn = document.getElementById('import-settings');
+        this.refreshCacheBtn = document.getElementById('refresh-cache-btn');
+        this.cacheInfoBtn = document.getElementById('cache-info-btn');
         
         // Model management elements
         this.syncModelsBtn = document.getElementById('sync-models-btn');
-        this.refreshModelsBtn = document.getElementById('refresh-models-btn');
         this.modelDownloadInput = document.getElementById('model-download-input');
         this.downloadModelBtn = document.getElementById('download-model-btn');
         this.downloadStatus = document.getElementById('download-status');
         this.progressFill = document.getElementById('progress-fill');
         this.downloadText = document.getElementById('download-text');
         
+        // Model tabs
+        this.modelTabBtns = document.querySelectorAll('.model-tab-btn');
+        this.installedModelsTab = document.getElementById('installed-models-tab');
+        this.addModelsTab = document.getElementById('add-models-tab');
+        
         // Available models elements
-        this.showAvailableModelsBtn = document.getElementById('show-available-models-btn');
-        this.hideAvailableModelsBtn = document.getElementById('hide-available-models-btn');
         this.refreshAvailableModelsBtn = document.getElementById('refresh-available-models-btn');
-        this.refreshCacheBtn = document.getElementById('refresh-cache-btn');
-        this.cacheInfoBtn = document.getElementById('cache-info-btn');
-        this.availableModelsPanel = document.getElementById('available-models-panel');
         this.availableModelsList = document.getElementById('available-models-list');
         this.modelSearchInput = document.getElementById('model-search-input');
         this.clearSearchBtn = document.getElementById('clear-search-btn');
     }
 
     attachEventListeners() {
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
+        // Core event listeners (required elements)
+        if (this.sendBtn) {
+            this.sendBtn.addEventListener('click', () => this.sendMessage());
+        }
+        if (this.newChatBtn) {
+            this.newChatBtn.addEventListener('click', () => this.createNewSession());
+        }
         
         // Settings modal listeners
-        this.settingsBtn.addEventListener('click', () => this.openSettings());
-        this.closeSettingsBtn.addEventListener('click', () => this.closeSettings());
-        this.settingsModal.addEventListener('click', (e) => {
-            if (e.target === this.settingsModal) {
-                this.closeSettings();
-            }
-        });
+        if (this.settingsBtn) {
+            this.settingsBtn.addEventListener('click', () => this.openSettings());
+        }
+        if (this.closeSettingsBtn) {
+            this.closeSettingsBtn.addEventListener('click', () => this.closeSettings());
+        }
+        if (this.settingsModal) {
+            this.settingsModal.addEventListener('click', (e) => {
+                if (e.target === this.settingsModal) {
+                    this.closeSettings();
+                }
+            });
+        }
         
         // Settings form listeners
-        this.temperatureSlider.addEventListener('input', () => {
-            this.temperatureValue.textContent = this.temperatureSlider.value;
-        });
+        if (this.temperatureSlider && this.temperatureValue) {
+            this.temperatureSlider.addEventListener('input', () => {
+                this.temperatureValue.textContent = this.temperatureSlider.value;
+            });
+        }
         
-        this.sidebarWidthSelect.addEventListener('change', () => {
-            this.updateSidebarWidth();
-        });
+        if (this.sidebarWidthSelect) {
+            this.sidebarWidthSelect.addEventListener('change', () => {
+                this.updateSidebarWidth();
+            });
+        }
         
-        this.themeSelect.addEventListener('change', () => {
-            this.applyTheme(this.themeSelect.value);
-            this.saveSettings(); // Save immediately when theme changes
-        });
+        if (this.themeSelect) {
+            this.themeSelect.addEventListener('change', () => {
+                this.applyTheme(this.themeSelect.value);
+                this.saveSettings(); // Save immediately when theme changes
+            });
+        }
         
-        this.clearAllSessionsBtn.addEventListener('click', () => this.clearAllSessions());
-        this.exportSettingsBtn.addEventListener('click', () => this.exportSettings());
-        this.importSettingsBtn.addEventListener('click', () => this.importSettings());
+        // Optional settings listeners
+        if (this.clearAllSessionsBtn) {
+            this.clearAllSessionsBtn.addEventListener('click', () => this.clearAllSessions());
+        }
+        if (this.exportSettingsBtn) {
+            this.exportSettingsBtn.addEventListener('click', () => this.exportSettings());
+        }
+        if (this.importSettingsBtn) {
+            this.importSettingsBtn.addEventListener('click', () => this.importSettings());
+        }
         
         // Model management listeners
-        this.syncModelsBtn.addEventListener('click', () => this.syncModels());
-        this.refreshModelsBtn.addEventListener('click', () => this.loadModels());
-        this.downloadModelBtn.addEventListener('click', () => this.downloadModel());
+        if (this.syncModelsBtn) {
+            this.syncModelsBtn.addEventListener('click', () => this.syncModels());
+        }
+        if (this.downloadModelBtn) {
+            this.downloadModelBtn.addEventListener('click', () => this.downloadModel());
+        }
+        
+        // Model tabs listeners
+        if (this.modelTabBtns) {
+            this.modelTabBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => this.switchModelTab(e.target.dataset.tab));
+            });
+        }
         
         // Enable download button when input has text
-        this.modelDownloadInput.addEventListener('input', () => {
-            this.downloadModelBtn.disabled = !this.modelDownloadInput.value.trim();
-        });
-        
-        // Allow Enter key to trigger download
-        this.modelDownloadInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && this.modelDownloadInput.value.trim()) {
-                this.downloadModel();
-            }
-        });
+        if (this.modelDownloadInput && this.downloadModelBtn) {
+            this.modelDownloadInput.addEventListener('input', () => {
+                this.downloadModelBtn.disabled = !this.modelDownloadInput.value.trim();
+            });
+            
+            // Allow Enter key to trigger download
+            this.modelDownloadInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && this.modelDownloadInput.value.trim()) {
+                    this.downloadModel();
+                }
+            });
+        }
         
         // Available models listeners
-        this.showAvailableModelsBtn.addEventListener('click', () => this.showAvailableModels());
-        this.hideAvailableModelsBtn.addEventListener('click', () => this.hideAvailableModels());
-        this.refreshAvailableModelsBtn.addEventListener('click', () => this.loadAvailableModels());
+        if (this.refreshAvailableModelsBtn) {
+            this.refreshAvailableModelsBtn.addEventListener('click', () => this.loadAvailableModels());
+        }
         
         // Cache management listeners
         if (this.refreshCacheBtn) {
@@ -137,20 +179,23 @@ class ChatApp {
             this.clearSearchBtn.addEventListener('click', () => this.clearSearch());
         }
         
-        this.messageInput.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
-                e.preventDefault();
-                this.sendMessage();
-            }
-        });
+        // Message input listeners
+        if (this.messageInput) {
+            this.messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendMessage();
+                }
+            });
 
-        this.messageInput.addEventListener('input', () => {
+            this.messageInput.addEventListener('input', () => {
+                this.adjustTextareaHeight();
+                this.updateSendButton();
+            });
+
+            // Auto-resize textarea
             this.adjustTextareaHeight();
-            this.updateSendButton();
-        });
-
-        // Auto-resize textarea
-        this.adjustTextareaHeight();
+        }
         
         // Load settings on startup
         this.loadSettings();
@@ -219,20 +264,41 @@ class ChatApp {
         }
 
         this.sessionsList.innerHTML = this.sessions.map(session => `
-            <div class="session-item ${session.id === this.currentSessionId ? 'active' : ''}" 
+            <div class="session-item ${session.id === this.currentSessionId ? 'active' : ''}"
                  data-session-id="${session.id}">
-                <div class="session-title">${this.escapeHtml(session.title)}</div>
-                <div class="session-meta">
-                    ${session.message_count} messages • ${this.formatDate(session.updated_at)}
+                <div class="session-content">
+                    <div class="session-title">${this.escapeHtml(session.title)}</div>
+                    <div class="session-meta">
+                        ${session.message_count} messages • ${this.formatDate(session.updated_at)}
+                    </div>
                 </div>
+                <button class="session-delete-btn" data-session-id="${session.id}" title="Delete session">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
+                    </svg>
+                </button>
             </div>
         `).join('');
 
         // Add click listeners to session items
         this.sessionsList.querySelectorAll('.session-item').forEach(item => {
-            item.addEventListener('click', () => {
+            item.addEventListener('click', (e) => {
+                // Don't select session if clicking on delete button
+                if (e.target.closest('.session-delete-btn')) {
+                    return;
+                }
                 const sessionId = item.dataset.sessionId;
                 this.selectSession(sessionId);
+            });
+        });
+
+        // Add click listeners to delete buttons
+        this.sessionsList.querySelectorAll('.session-delete-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                console.log('Delete button clicked for session:', sessionId);
+                this.deleteSession(sessionId);
             });
         });
     }
@@ -258,9 +324,8 @@ class ChatApp {
     renderMessages(messages) {
         if (messages.length === 0) {
             this.chatMessages.innerHTML = `
-                <div class="welcome-message">
-                    <h2>Start chatting!</h2>
-                    <p>Type a message below to begin your conversation with the AI.</p>
+                <div class="welcome-section">
+                    <h1 class="welcome-title">What's on the agenda today?</h1>
                 </div>
             `;
             return;
@@ -290,16 +355,74 @@ class ChatApp {
         const sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
         this.currentSessionId = sessionId;
         
-        // Clear messages
+        // Clear messages and show welcome
         this.chatMessages.innerHTML = `
-            <div class="welcome-message">
-                <h2>New Chat Started!</h2>
-                <p>Type a message below to begin your conversation.</p>
+            <div class="welcome-section">
+                <h1 class="welcome-title">What's on the agenda today?</h1>
             </div>
         `;
         
+        // Update sessions list to remove active state
+        this.renderSessions();
+        
         // The session will be created automatically when the first message is sent
         this.messageInput.focus();
+    }
+
+    async deleteSession(sessionId) {
+        console.log('deleteSession called with:', sessionId, '- ACTUAL DELETION');
+        
+        const session = this.sessions.find(s => s.id === sessionId);
+        if (!session) {
+            console.log('Session not found:', sessionId);
+            return;
+        }
+
+        if (!confirm(`Are you sure you want to delete "${session.title}"?\n\nThis will permanently delete the session and all its messages. This action cannot be undone.`)) {
+            console.log('User cancelled deletion');
+            return;
+        }
+
+        console.log('Proceeding with actual session deletion via API');
+        
+        try {
+            const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            console.log('Session deleted successfully from backend');
+
+            // Remove from local sessions array
+            this.sessions = this.sessions.filter(s => s.id !== sessionId);
+            console.log('Session removed from local array');
+            
+            // If this was the current session, clear it
+            if (this.currentSessionId === sessionId) {
+                this.currentSessionId = null;
+                this.chatMessages.innerHTML = `
+                    <div class="welcome-section">
+                        <h1 class="welcome-title">What's on the agenda today?</h1>
+                    </div>
+                `;
+                console.log('Current session cleared');
+            }
+
+            // Re-render sessions list
+            this.renderSessions();
+            console.log('Sessions list re-rendered');
+            
+            this.showNotification(`Session "${session.title}" deleted successfully`, 'success');
+            console.log('Deletion complete');
+            
+        } catch (error) {
+            console.error('Failed to delete session:', error);
+            this.showNotification(`Failed to delete session: ${error.message}`, 'error');
+        }
     }
 
     async sendMessage() {
@@ -439,17 +562,19 @@ class ChatApp {
     }
 
     addMessageToUI(role, content, metadata = {}) {
-        // Remove welcome message if it exists
-        const welcomeMessage = this.chatMessages.querySelector('.welcome-message');
-        if (welcomeMessage) {
-            welcomeMessage.remove();
+        if (!this.chatMessages) return null;
+        
+        // Remove welcome section if it exists
+        const welcomeSection = this.chatMessages.querySelector('.welcome-section');
+        if (welcomeSection) {
+            welcomeSection.remove();
         }
 
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}`;
         
         const timestamp = metadata.timestamp || new Date().toISOString();
-        const metaText = this.formatDate(timestamp) + 
+        const metaText = this.formatDate(timestamp) +
                         (metadata.tokens ? ` • ${metadata.tokens} tokens` : '') +
                         (metadata.model ? ` • ${metadata.model}` : '');
 
@@ -489,6 +614,8 @@ class ChatApp {
     }
 
     addTypingIndicator() {
+        if (!this.chatMessages) return null;
+        
         const typingDiv = document.createElement('div');
         typingDiv.className = 'message assistant typing-indicator';
         typingDiv.innerHTML = `
@@ -509,6 +636,8 @@ class ChatApp {
     }
 
     showError(message) {
+        if (!this.chatMessages) return;
+        
         const errorDiv = document.createElement('div');
         errorDiv.className = 'error-message';
         errorDiv.textContent = message;
@@ -525,7 +654,9 @@ class ChatApp {
     }
 
     scrollToBottom() {
-        this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        if (this.chatMessages) {
+            this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+        }
     }
 
     escapeHtml(text) {
@@ -577,41 +708,50 @@ class ChatApp {
         this.modelsList.innerHTML = this.models.map(model => `
             <div class="model-item ${model.is_default ? 'default' : ''}" data-model-id="${model.id}">
                 <div class="model-header">
-                    <div>
+                    <div class="model-info">
                         <div class="model-name">
                             ${this.escapeHtml(model.name)}
                             ${model.is_default ? '<span class="default-badge">DEFAULT</span>' : ''}
                         </div>
                         <div class="model-display-name">${this.escapeHtml(model.display_name)}</div>
-                    </div>
-                    <div class="model-status-container">
+                        <div class="model-meta">
+                            <span class="model-status ${model.status}">
+                                ${model.status === 'downloading' ?
+                                    `downloading ${this.getDownloadProgress(model.id)}` :
+                                    model.status
+                                }
+                            </span>
+                            ${model.size > 0 ? `<span class="model-size">${this.formatModelSize(model.size)}</span>` : ''}
+                            <span>${model.last_used_at ? 'Last used: ' + this.formatDate(model.last_used_at) : 'Never used'}</span>
+                        </div>
                         ${model.status === 'downloading' ?
                             `<div class="model-download-progress">
                                 <div class="download-progress-bar">
                                     <div class="download-progress-fill" style="width: ${this.getDownloadProgressPercent(model.id)}%"></div>
                                 </div>
-                                <span class="model-status downloading">
-                                    downloading ${this.getDownloadProgress(model.id)}
-                                </span>
-                            </div>` :
-                            `<span class="model-status ${model.status}">${model.status}</span>`
+                            </div>` : ''
                         }
-                        ${model.size > 0 ? `<span class="model-size">${this.formatModelSize(model.size)}</span>` : ''}
                     </div>
-                </div>
-                <div class="model-meta">
-                    <span>${model.last_used_at ? 'Last used: ' + this.formatDate(model.last_used_at) : 'Never used'}</span>
-                    <span>${model.is_enabled ? 'Enabled' : 'Disabled'}</span>
-                </div>
-                <div class="model-actions">
-                    ${!model.is_default ? `<button class="model-btn primary" onclick="chatApp.setDefaultModel('${model.id}')">Set Default</button>` : ''}
-                    <button class="model-btn" onclick="chatApp.toggleModelConfig('${model.id}')">Config</button>
-                    <button class="model-btn" onclick="chatApp.toggleModel('${model.id}', ${!model.is_enabled})">${model.is_enabled ? 'Disable' : 'Enable'}</button>
-                    ${model.status === 'removed' ?
-                        `<button class="model-btn restore" onclick="chatApp.restoreModel('${model.id}')">Restore</button>
-                         <button class="model-btn danger" onclick="chatApp.hardDeleteModel('${model.id}')">Delete Forever</button>` :
-                        `<button class="model-btn warning" onclick="chatApp.deleteModel('${model.id}')">Remove</button>`
-                    }
+                    <div class="model-actions">
+                        <div class="model-actions-dropdown">
+                            <button class="model-actions-btn" onclick="chatApp.toggleModelActions('${model.id}')">
+                                Actions ▼
+                            </button>
+                            <div id="actions-${model.id}" class="model-actions-menu">
+                                ${model.status === 'downloading' ?
+                                    `<button class="warning" onclick="chatApp.cancelDownload('${model.id}')">Cancel Download</button>
+                                     <button class="danger" onclick="chatApp.forceRemoveModel('${model.id}')">Force Remove</button>` :
+                                    model.status === 'removed' ?
+                                        `<button onclick="chatApp.restoreModel('${model.id}')">Restore</button>
+                                         <button class="danger" onclick="chatApp.hardDeleteModel('${model.id}')">Delete Forever</button>` :
+                                        `${!model.is_default ? `<button class="primary" onclick="chatApp.setDefaultModel('${model.id}')">Set as Default</button>` : ''}
+                                         <button onclick="chatApp.toggleModelConfig('${model.id}')">Configuration</button>
+                                         <button onclick="chatApp.toggleModel('${model.id}', ${!model.is_enabled})">${model.is_enabled ? 'Disable' : 'Enable'}</button>
+                                         <button class="danger" onclick="chatApp.deleteModel('${model.id}')">Remove</button>`
+                                }
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div id="config-${model.id}" class="model-config-panel">
                     <div class="loading-spinner"></div>
@@ -907,9 +1047,8 @@ class ChatApp {
                 this.currentSessionId = null;
                 this.renderSessions();
                 this.chatMessages.innerHTML = `
-                    <div class="welcome-message">
-                        <h2>Welcome to Chat Ollama!</h2>
-                        <p>Start a conversation with your local LLM. Your messages are saved and you can continue conversations anytime.</p>
+                    <div class="welcome-section">
+                        <h1 class="welcome-title">What's on the agenda today?</h1>
                     </div>
                 `;
                 alert('All chat sessions have been cleared.');
@@ -963,9 +1102,14 @@ class ChatApp {
         const modelName = this.modelDownloadInput.value.trim();
         if (!modelName) return;
         
-        // Disable the download button and show progress
+        // Store original button state
+        const originalBtnContent = this.downloadModelBtn.innerHTML;
+        const originalBtnDisabled = this.downloadModelBtn.disabled;
+        
+        // Show immediate loading state
         this.downloadModelBtn.disabled = true;
-        this.downloadModelBtn.innerHTML = '<span class="loading-spinner"></span> Pulling...';
+        this.downloadModelBtn.innerHTML = '<span class="loading-spinner"></span> Starting...';
+        this.downloadModelBtn.style.background = '#f59e0b';
         this.showDownloadProgress('Initiating download...', 0);
         
         try {
@@ -987,7 +1131,13 @@ class ChatApp {
             }
             
             const data = await response.json();
+            
+            // Update button to show download in progress
+            this.downloadModelBtn.innerHTML = '<span class="loading-spinner"></span> Downloading...';
             this.showDownloadProgress(`Download started for ${modelName}`, 10);
+            
+            // Show success notification
+            this.showNotification(`Download started for ${modelName}`, 'success');
             
             // Start polling for download status
             await this.pollModelDownloadStatus(data.id, modelName);
@@ -995,16 +1145,23 @@ class ChatApp {
         } catch (error) {
             console.error('Failed to start download:', error);
             this.showDownloadError(`Failed to download ${modelName}: ${error.message}`);
-        } finally {
-            this.downloadModelBtn.disabled = false;
-            this.downloadModelBtn.innerHTML = '📥 Pull Model';
+            this.showNotification(`Failed to start download: ${error.message}`, 'error');
+            
+            // Restore original button state on error
+            this.downloadModelBtn.disabled = originalBtnDisabled;
+            this.downloadModelBtn.innerHTML = originalBtnContent;
+            this.downloadModelBtn.style.background = '';
         }
     }
     
     async pollModelDownloadStatus(modelId, modelName) {
-        const pollInterval = 2000; // Poll every 2 seconds
-        const maxPolls = 900; // Max 30 minutes
+        const pollInterval = 3000; // Poll every 3 seconds (reduced frequency)
+        const maxPolls = 1800; // Max 90 minutes (3000ms * 1800 = 90 minutes)
         let pollCount = 0;
+        let lastProgress = 0;
+        let stuckCount = 0;
+        let consecutiveErrors = 0;
+        let lastSuccessfulPoll = Date.now();
         
         const poll = async () => {
             try {
@@ -1015,21 +1172,79 @@ class ChatApp {
                 }
                 
                 const data = await response.json();
+                consecutiveErrors = 0; // Reset error count on successful response
+                lastSuccessfulPoll = Date.now();
                 
                 if (data.status === 'available') {
                     this.showDownloadSuccess(`${modelName} downloaded successfully!`);
+                    this.showNotification(`${modelName} is now available!`, 'success');
                     this.modelDownloadInput.value = '';
+                    
+                    // Reset download button
+                    this.downloadModelBtn.disabled = false;
+                    this.downloadModelBtn.innerHTML = '📥 Download';
+                    this.downloadModelBtn.style.background = '';
                     
                     // Refresh models list
                     await this.loadModels();
                     
                 } else if (data.status === 'error') {
-                    this.showDownloadError(`Download failed for ${modelName}`);
+                    // Get error details from model description if available
+                    const model = this.models.find(m => m.id === modelId);
+                    const errorDetails = model && model.description.includes('Download failed:') ?
+                        model.description : `Download failed for ${modelName}`;
+                    
+                    this.showDownloadError(errorDetails);
+                    this.showNotification(`Download failed for ${modelName}`, 'error');
+                    
+                    // Reset download button
+                    this.downloadModelBtn.disabled = false;
+                    this.downloadModelBtn.innerHTML = '❌ Failed';
+                    this.downloadModelBtn.style.background = '#dc2626';
+                    
+                    // Refresh models list to show error state
+                    await this.loadModels();
                     
                 } else if (data.status === 'downloading') {
-                    // Use actual progress from API if available, otherwise estimate
-                    const progress = data.progress > 0 ? data.progress : Math.min(10 + (pollCount * 2), 90);
+                    // Use actual progress from API, with better fallback logic
+                    let progress = data.progress || 0;
+                    
+                    // If no progress from API, estimate based on time and poll count
+                    if (progress === 0 && pollCount > 5) {
+                        // Estimate progress: start at 5%, increase slowly
+                        progress = Math.min(5 + (pollCount * 0.5), 85);
+                    }
+                    
+                    // Enhanced stuck detection
+                    const progressDiff = Math.abs(progress - lastProgress);
+                    if (progressDiff < 0.1 && progress > 0) {
+                        stuckCount++;
+                        
+                        // Progressive warnings
+                        if (stuckCount === 20) { // 1 minute of no progress
+                            this.showNotification(`${modelName} download progress seems slow...`, 'warning');
+                        } else if (stuckCount === 40) { // 2 minutes of no progress
+                            this.showDownloadProgress(`${modelName} download may be stuck at ${progress.toFixed(1)}%...`, progress);
+                            this.showNotification(`${modelName} download appears stuck. This may be normal for large models.`, 'warning');
+                        } else if (stuckCount >= 60) { // 3 minutes of no progress
+                            this.showDownloadError(`Download appears stuck for ${modelName} at ${progress.toFixed(1)}%. Use Actions menu to cancel if needed.`);
+                            this.showNotification(`Download stuck for ${modelName}. Check Actions menu for options.`, 'warning');
+                            
+                            // Update download button but continue polling
+                            this.downloadModelBtn.innerHTML = '⚠️ Stuck';
+                            this.downloadModelBtn.style.background = '#f59e0b';
+                        }
+                    } else {
+                        stuckCount = 0; // Reset stuck counter if progress is made
+                        lastProgress = progress;
+                    }
+                    
                     this.showDownloadProgress(`Downloading ${modelName}... ${progress.toFixed(1)}%`, progress);
+                    
+                    // Update download button with progress
+                    if (stuckCount < 60) {
+                        this.downloadModelBtn.innerHTML = `<span class="loading-spinner"></span> ${progress.toFixed(0)}%`;
+                    }
                     
                     // Update the model in our local list with progress
                     const modelIndex = this.models.findIndex(m => m.id === modelId);
@@ -1038,23 +1253,67 @@ class ChatApp {
                         this.renderModels(); // Re-render to show updated progress
                     }
                     
-                    // Continue polling
+                    // Continue polling with adaptive interval
                     pollCount++;
+                    let nextPollInterval = pollInterval;
+                    
+                    // Slow down polling if stuck to reduce server load
+                    if (stuckCount > 40) {
+                        nextPollInterval = 10000; // Poll every 10 seconds if stuck
+                    } else if (stuckCount > 20) {
+                        nextPollInterval = 5000; // Poll every 5 seconds if slow
+                    }
+                    
                     if (pollCount < maxPolls) {
-                        setTimeout(poll, pollInterval);
+                        setTimeout(poll, nextPollInterval);
                     } else {
-                        this.showDownloadError(`Download timeout for ${modelName}`);
+                        this.showDownloadError(`Download timeout for ${modelName} after 90 minutes. Use Actions menu to cancel.`);
+                        this.showNotification(`Download timeout for ${modelName}`, 'error');
+                        
+                        // Reset download button
+                        this.downloadModelBtn.disabled = false;
+                        this.downloadModelBtn.innerHTML = '⏰ Timeout';
+                        this.downloadModelBtn.style.background = '#dc2626';
                     }
                 }
                 
             } catch (error) {
                 console.error('Failed to check download status:', error);
-                this.showDownloadError(`Failed to check download status for ${modelName}`);
+                consecutiveErrors++;
+                
+                // Handle network errors gracefully
+                if (consecutiveErrors >= 5) {
+                    this.showDownloadError(`Lost connection while monitoring ${modelName}. Download may still be in progress.`);
+                    this.showNotification(`Connection lost while monitoring download`, 'error');
+                    
+                    // Reset download button on persistent error
+                    this.downloadModelBtn.disabled = false;
+                    this.downloadModelBtn.innerHTML = '🔌 Connection Lost';
+                    this.downloadModelBtn.style.background = '#dc2626';
+                    return; // Stop polling after too many errors
+                }
+                
+                // Check if we've been unable to poll for too long
+                if (Date.now() - lastSuccessfulPoll > 300000) { // 5 minutes
+                    this.showDownloadError(`Unable to monitor ${modelName} download for 5 minutes. Check connection.`);
+                    this.showNotification(`Download monitoring failed`, 'error');
+                    
+                    this.downloadModelBtn.disabled = false;
+                    this.downloadModelBtn.innerHTML = '❌ Monitor Failed';
+                    this.downloadModelBtn.style.background = '#dc2626';
+                    return;
+                }
+                
+                // Continue polling despite errors, but with longer interval
+                pollCount++;
+                if (pollCount < maxPolls) {
+                    setTimeout(poll, pollInterval * 2); // Double the interval on error
+                }
             }
         };
         
-        // Start polling
-        setTimeout(poll, pollInterval);
+        // Start polling after a short delay
+        setTimeout(poll, 1000);
     }
     
     showDownloadProgress(message, progress) {
@@ -1096,15 +1355,48 @@ class ChatApp {
             .join(' ');
     }
 
-    // Available Models Management
-    async showAvailableModels() {
-        this.availableModelsPanel.classList.add('active');
-        await this.loadAvailableModels();
+    // Model Tab Management
+    switchModelTab(tabName) {
+        // Update tab buttons
+        this.modelTabBtns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        
+        // Update tab content
+        this.installedModelsTab.classList.toggle('active', tabName === 'installed');
+        this.addModelsTab.classList.toggle('active', tabName === 'add');
+        
+        // Load available models when switching to add tab
+        if (tabName === 'add') {
+            this.loadAvailableModels();
+        }
     }
     
-    hideAvailableModels() {
-        this.availableModelsPanel.classList.remove('active');
-        this.clearSearch();
+    // Model Actions Dropdown
+    toggleModelActions(modelId) {
+        // Close all other dropdowns first
+        document.querySelectorAll('.model-actions-menu').forEach(menu => {
+            if (menu.id !== `actions-${modelId}`) {
+                menu.classList.remove('active');
+            }
+        });
+        
+        // Toggle the clicked dropdown
+        const menu = document.getElementById(`actions-${modelId}`);
+        if (menu) {
+            menu.classList.toggle('active');
+        }
+        
+        // Close dropdown when clicking outside
+        if (menu && menu.classList.contains('active')) {
+            const closeHandler = (e) => {
+                if (!e.target.closest('.model-actions-dropdown')) {
+                    menu.classList.remove('active');
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 0);
+        }
     }
     
     async loadAvailableModels() {
@@ -1145,23 +1437,47 @@ class ChatApp {
             return;
         }
         
-        // Categorize models
-        const categories = this.categorizeModels(models);
+        // Show top models first, then categorize the rest
+        const topModels = [
+            'llama3.2:1b', 'llama3.2:3b', 'llama3.1:8b', 'mistral:7b',
+            'codellama:7b', 'phi3:mini', 'gemma:2b', 'qwen2:1.5b'
+        ];
+        
+        const availableTopModels = models.filter(model => topModels.includes(model));
+        const otherModels = models.filter(model => !topModels.includes(model));
         
         let html = '';
-        for (const [categoryName, categoryModels] of Object.entries(categories)) {
-            if (categoryModels.length === 0) continue;
-            
-            const categoryInfo = this.getCategoryInfo(categoryName);
+        
+        // Render top models section
+        if (availableTopModels.length > 0) {
             html += `
                 <div class="model-category">
                     <div class="category-header">
-                        <span class="category-title">${categoryInfo.title}</span>
-                        <span class="category-description">${categoryInfo.description}</span>
+                        <span class="category-title">⭐ Recommended Models</span>
+                        <span class="category-description">Popular and well-tested models</span>
                     </div>
-                    ${categoryModels.map(model => this.renderAvailableModelItem(model)).join('')}
+                    ${availableTopModels.map(model => this.renderAvailableModelItem(model)).join('')}
                 </div>
             `;
+        }
+        
+        // Render other models if any
+        if (otherModels.length > 0) {
+            const categories = this.categorizeModels(otherModels);
+            for (const [categoryName, categoryModels] of Object.entries(categories)) {
+                if (categoryModels.length === 0) continue;
+                
+                const categoryInfo = this.getCategoryInfo(categoryName);
+                html += `
+                    <div class="model-category">
+                        <div class="category-header">
+                            <span class="category-title">${categoryInfo.title}</span>
+                            <span class="category-description">${categoryInfo.description}</span>
+                        </div>
+                        ${categoryModels.map(model => this.renderAvailableModelItem(model)).join('')}
+                    </div>
+                `;
+            }
         }
         
         this.availableModelsList.innerHTML = html;
@@ -1405,11 +1721,26 @@ class ChatApp {
     selectAvailableModel(modelName) {
         this.modelDownloadInput.value = modelName;
         this.downloadModelBtn.disabled = false;
-        this.hideAvailableModels();
+        // Switch to the installed models tab to show the input
+        this.switchModelTab('add');
     }
     
     async downloadSpecificModel(modelName) {
-        // Directly download the model without populating the input field
+        // Find the download button for this model and show loading state
+        const modelItem = document.querySelector(`[onclick*="downloadSpecificModel('${modelName}')"]`)?.closest('.available-model-item');
+        const downloadBtn = modelItem?.querySelector('.download-model-btn');
+        
+        if (downloadBtn) {
+            // Store original button content
+            const originalContent = downloadBtn.innerHTML;
+            
+            // Show immediate loading state
+            downloadBtn.innerHTML = '<span class="loading-spinner"></span> Downloading...';
+            downloadBtn.disabled = true;
+            downloadBtn.style.opacity = '0.7';
+        }
+        
+        // Show download progress immediately
         this.showDownloadProgress(`Starting download for ${modelName}...`, 0);
         
         try {
@@ -1433,12 +1764,28 @@ class ChatApp {
             const data = await response.json();
             this.showDownloadProgress(`Download started for ${modelName}`, 10);
             
+            // Update button to show download in progress
+            if (downloadBtn) {
+                downloadBtn.innerHTML = '<span class="loading-spinner"></span> Downloading...';
+                downloadBtn.style.background = '#f59e0b';
+                downloadBtn.style.color = 'white';
+            }
+            
             // Start polling for download status
             await this.pollModelDownloadStatus(data.id, modelName);
             
         } catch (error) {
             console.error('Failed to start download:', error);
             this.showDownloadError(`Failed to download ${modelName}: ${error.message}`);
+            
+            // Restore button state on error
+            if (downloadBtn) {
+                downloadBtn.innerHTML = '📥 Download';
+                downloadBtn.disabled = false;
+                downloadBtn.style.opacity = '1';
+                downloadBtn.style.background = '';
+                downloadBtn.style.color = '';
+            }
         }
     }
 
@@ -1724,14 +2071,126 @@ class ChatApp {
             this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
         }
     }
+
+    // Add notification system for better user feedback
+    showNotification(message, type = 'info') {
+        // Remove existing notifications
+        const existingNotifications = document.querySelectorAll('.notification');
+        existingNotifications.forEach(notification => notification.remove());
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `notification ${type}`;
+        notification.innerHTML = `
+            <div class="notification-content">
+                <span class="notification-message">${message}</span>
+                <button class="notification-close" onclick="this.parentElement.parentElement.remove()">×</button>
+            </div>
+        `;
+        
+        // Add to page
+        document.body.appendChild(notification);
+        
+        // Auto-remove after 5 seconds
+        setTimeout(() => {
+            if (notification.parentNode) {
+                notification.remove();
+            }
+        }, 5000);
+        
+        // Animate in
+        setTimeout(() => {
+            notification.classList.add('show');
+        }, 100);
+    }
+
+    // Cancel download functionality
+    async cancelDownload(modelId) {
+        const model = this.models.find(m => m.id === modelId);
+        if (!model) return;
+        
+        if (!confirm(`Cancel download for "${model.display_name}"?\n\nThis will stop the download and mark the model as error state.`)) {
+            return;
+        }
+        
+        try {
+            // Update model status to error to stop polling
+            const response = await fetch(`${this.apiBase}/v1/models/${modelId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    status: 'error'
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            await this.loadModels(); // Refresh the list
+            this.showSyncStatus(`Download cancelled for "${model.display_name}"`, 'success');
+            this.showNotification(`Download cancelled for ${model.display_name}`, 'info');
+        } catch (error) {
+            console.error('Failed to cancel download:', error);
+            this.showSyncStatus(`Failed to cancel download: ${error.message}`, 'error');
+            this.showNotification(`Failed to cancel download: ${error.message}`, 'error');
+        }
+    }
+
+    // Force remove model functionality
+    async forceRemoveModel(modelId) {
+        const model = this.models.find(m => m.id === modelId);
+        if (!model) return;
+        
+        if (!confirm(`⚠️ FORCE REMOVE WARNING ⚠️\n\nAre you sure you want to force remove "${model.display_name}"?\n\nThis will:\n• Stop any ongoing download\n• Remove the model from the database\n• May leave partial files in Ollama\n\nThis action cannot be undone!`)) {
+            return;
+        }
+        
+        try {
+            this.showSyncStatus(`Force removing "${model.display_name}"...`, 'warning');
+            
+            const response = await fetch(`${this.apiBase}/v1/models/${modelId}/hard`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            await this.loadModels(); // Refresh the list
+            this.showSyncStatus(`Model "${model.display_name}" force removed`, 'success');
+            this.showNotification(`${model.display_name} has been force removed`, 'success');
+        } catch (error) {
+            console.error('Failed to force remove model:', error);
+            this.showSyncStatus(`Failed to force remove model: ${error.message}`, 'error');
+            this.showNotification(`Failed to force remove model: ${error.message}`, 'error');
+        }
+    }
 }
 
-// Initialize the app when the page loads
-document.addEventListener('DOMContentLoaded', () => {
-    new ChatApp();
-});
 // Initialize the app when the page loads
 let chatApp;
 document.addEventListener('DOMContentLoaded', () => {
     chatApp = new ChatApp();
+    
+    // Override any cached global references to ensure new method is used
+    window.chatApp = chatApp;
+    
+    // Force override any old deleteSession methods
+    if (window.chatApp && window.chatApp.deleteSession) {
+        console.log('Global chatApp.deleteSession method is available and updated');
+    }
 });
+
+// Global function to handle any remaining onclick calls
+window.deleteSession = function(sessionId) {
+    console.log('Global deleteSession called - redirecting to chatApp instance');
+    if (window.chatApp && window.chatApp.deleteSession) {
+        window.chatApp.deleteSession(sessionId);
+    } else {
+        console.error('chatApp instance not available');
+    }
+};

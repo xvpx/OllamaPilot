@@ -370,7 +370,7 @@ func (c *OllamaClient) GetModelsWithInfo(ctx context.Context) ([]models.OllamaMo
 	return modelsInfo, nil
 }
 
-// PullModel downloads a model from Ollama
+// PullModel downloads a model from Ollama with improved error handling and timeout management
 func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progressChan chan<- models.ModelDownloadProgress) error {
 	defer close(progressChan)
 
@@ -392,6 +392,11 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 		return err
 	}
 
+	// Create a custom HTTP client with longer timeout for downloads
+	downloadClient := &http.Client{
+		Timeout: 0, // No timeout - we'll handle it with context
+	}
+
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/pull", bytes.NewBuffer(reqBody))
 	if err != nil {
 		progressChan <- models.ModelDownloadProgress{
@@ -408,7 +413,14 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 		Str("model", modelName).
 		Msg("Starting model download from Ollama")
 
-	resp, err := c.httpClient.Do(httpReq)
+	// Send initial progress
+	progressChan <- models.ModelDownloadProgress{
+		ModelName:  modelName,
+		Status:     "pulling manifest",
+		Percentage: 0,
+	}
+
+	resp, err := downloadClient.Do(httpReq)
 	if err != nil {
 		progressChan <- models.ModelDownloadProgress{
 			ModelName: modelName,
@@ -421,16 +433,32 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		errorMsg := string(body)
+		
+		// Check for specific error patterns
+		if strings.Contains(errorMsg, "newer version of Ollama") {
+			errorMsg = "Model requires a newer version of Ollama. Please update Ollama and try again."
+		} else if strings.Contains(errorMsg, "not found") {
+			errorMsg = "Model not found in Ollama registry. Please check the model name."
+		}
+		
 		progressChan <- models.ModelDownloadProgress{
 			ModelName: modelName,
 			Status:    "error",
-			Error:     fmt.Sprintf("Ollama returned status %d: %s", resp.StatusCode, string(body)),
+			Error:     fmt.Sprintf("Ollama returned status %d: %s", resp.StatusCode, errorMsg),
 		}
-		return fmt.Errorf("ollama returned status %d", resp.StatusCode)
+		return fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, errorMsg)
 	}
 
-	// Read streaming response
+	// Read streaming response with timeout detection
 	decoder := json.NewDecoder(resp.Body)
+	lastProgressTime := time.Now()
+	progressTimeout := 5 * time.Minute // If no progress for 5 minutes, consider it stuck
+	heartbeatTicker := time.NewTicker(30 * time.Second) // Send heartbeat every 30 seconds
+	defer heartbeatTicker.Stop()
+
+	var lastProgress models.ModelDownloadProgress
+	downloadStarted := false
 
 	for {
 		select {
@@ -438,10 +466,35 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 			progressChan <- models.ModelDownloadProgress{
 				ModelName: modelName,
 				Status:    "error",
-				Error:     "Download cancelled",
+				Error:     "Download cancelled by user",
 			}
 			return ctx.Err()
+			
+		case <-heartbeatTicker.C:
+			// Check if we've been stuck for too long
+			if time.Since(lastProgressTime) > progressTimeout {
+				progressChan <- models.ModelDownloadProgress{
+					ModelName: modelName,
+					Status:    "error",
+					Error:     "Download appears to be stuck - no progress for 5 minutes",
+				}
+				return fmt.Errorf("download timeout - no progress for %v", progressTimeout)
+			}
+			
+			// Send heartbeat if we haven't sent progress recently
+			if time.Since(lastProgressTime) > 30*time.Second && downloadStarted {
+				heartbeat := lastProgress
+				heartbeat.Status = "downloading (checking progress...)"
+				progressChan <- heartbeat
+			}
+			
 		default:
+		}
+
+		// Set a short deadline for reading the next chunk
+		resp.Body = &timeoutReader{
+			reader:  resp.Body,
+			timeout: 30 * time.Second,
 		}
 
 		var pullResp struct {
@@ -449,18 +502,40 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 			Digest    string `json:"digest,omitempty"`
 			Total     int64  `json:"total,omitempty"`
 			Completed int64  `json:"completed,omitempty"`
+			Error     string `json:"error,omitempty"`
 		}
 
 		if err := decoder.Decode(&pullResp); err != nil {
 			if err == io.EOF {
+				c.logger.Info().Str("model", modelName).Msg("Download stream ended")
 				break
 			}
+			
+			// Check if it's a timeout or network error
+			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "connection") {
+				progressChan <- models.ModelDownloadProgress{
+					ModelName: modelName,
+					Status:    "error",
+					Error:     "Network timeout or connection lost during download",
+				}
+			} else {
+				progressChan <- models.ModelDownloadProgress{
+					ModelName: modelName,
+					Status:    "error",
+					Error:     fmt.Sprintf("Failed to decode streaming response: %v", err),
+				}
+			}
+			return err
+		}
+
+		// Check for errors in the response
+		if pullResp.Error != "" {
 			progressChan <- models.ModelDownloadProgress{
 				ModelName: modelName,
 				Status:    "error",
-				Error:     fmt.Sprintf("Failed to decode streaming response: %v", err),
+				Error:     pullResp.Error,
 			}
-			return err
+			return fmt.Errorf("ollama error: %s", pullResp.Error)
 		}
 
 		progress := models.ModelDownloadProgress{
@@ -471,15 +546,39 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 			Completed: pullResp.Completed,
 		}
 
+		// Calculate percentage
 		if pullResp.Total > 0 {
 			progress.Percentage = float64(pullResp.Completed) / float64(pullResp.Total) * 100
+		} else if pullResp.Status == "downloading" && !downloadStarted {
+			// If we're downloading but don't have total yet, show some progress
+			progress.Percentage = 5
 		}
+
+		// Update progress tracking
+		if progress.Percentage > lastProgress.Percentage || progress.Status != lastProgress.Status {
+			lastProgressTime = time.Now()
+			downloadStarted = true
+		}
+		lastProgress = progress
 
 		progressChan <- progress
 
+		c.logger.Debug().
+			Str("model", modelName).
+			Str("status", pullResp.Status).
+			Float64("percentage", progress.Percentage).
+			Msg("Download progress update")
+
 		// Check if download is complete
 		if pullResp.Status == "success" || strings.Contains(pullResp.Status, "success") {
+			c.logger.Info().Str("model", modelName).Msg("Download completed successfully")
 			break
+		}
+		
+		// Check for specific completion statuses
+		if pullResp.Status == "verifying sha256 digest" || pullResp.Status == "writing manifest" {
+			progress.Percentage = 95 // Near completion
+			progressChan <- progress
 		}
 	}
 
@@ -488,6 +587,36 @@ func (c *OllamaClient) PullModel(ctx context.Context, modelName string, progress
 		Msg("Model download completed")
 
 	return nil
+}
+
+// timeoutReader wraps an io.Reader with a timeout
+type timeoutReader struct {
+	reader  io.ReadCloser
+	timeout time.Duration
+}
+
+func (tr *timeoutReader) Read(p []byte) (n int, err error) {
+	type result struct {
+		n   int
+		err error
+	}
+	
+	ch := make(chan result, 1)
+	go func() {
+		n, err := tr.reader.Read(p)
+		ch <- result{n, err}
+	}()
+	
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-time.After(tr.timeout):
+		return 0, fmt.Errorf("read timeout after %v", tr.timeout)
+	}
+}
+
+func (tr *timeoutReader) Close() error {
+	return tr.reader.Close()
 }
 
 // GetModelInfo retrieves detailed information about a model
