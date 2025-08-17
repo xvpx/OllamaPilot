@@ -42,18 +42,11 @@ func main() {
 		}
 	}()
 
-	if cfg.IsPostgreSQL() {
-		logger.Info().
-			Str("db_type", "postgresql").
-			Str("db_host", cfg.DBHost).
-			Str("db_name", cfg.DBName).
-			Msg("Database initialized")
-	} else {
-		logger.Info().
-			Str("db_type", "sqlite").
-			Str("db_path", cfg.DBPath).
-			Msg("Database initialized")
-	}
+	logger.Info().
+		Str("db_type", "postgresql").
+		Str("db_host", cfg.DBHost).
+		Str("db_name", cfg.DBName).
+		Msg("Database initialized")
 
 	// Run database migrations
 	if err := database.RunMigrations(db, cfg); err != nil {

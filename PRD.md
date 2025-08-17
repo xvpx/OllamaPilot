@@ -14,7 +14,7 @@ The solution will be **dockerized**, self-hostable, and optimized for **low-late
 - **Modularity:** Allow new tools (MCP or custom) to be added with minimal code changes.
 - **Persistence:** Provide short- and long-term memory using SQL + vector storage.
 - **Security:** Strong sandboxing for untrusted code execution.
-- **Scalability:** Support local dev (SQLite) and production (Postgres/Qdrant).
+- **Scalability:** Support both development and production with PostgreSQL and pgvector.
 
 ---
 
@@ -27,7 +27,7 @@ The solution will be **dockerized**, self-hostable, and optimized for **low-late
 
 ### 3.2 Memory
 - **Short-term:** In-session context tracking.
-- **Long-term:** Persisted memory in SQL (SQLite/Postgres).
+- **Long-term:** Persisted memory in PostgreSQL.
 - **Embeddings:** Periodic summarization & embeddings stored in Qdrant/pgvector.
 - **API:** CRUD for user/system memories.
 
@@ -60,7 +60,7 @@ The solution will be **dockerized**, self-hostable, and optimized for **low-late
 - **api**: Go HTTP server (chat orchestration, tool routing).
 - **ollama**: LLM runtime.
 - **vector-db**: Qdrant or Postgres+pgvector.
-- **sql-db**: Postgres (prod) / SQLite (dev).
+- **sql-db**: PostgreSQL for all environments.
 - **exec-sandbox**: Code execution workers.
 - **optional**: redis (for queues/caching).
 
@@ -94,8 +94,7 @@ The solution will be **dockerized**, self-hostable, and optimized for **low-late
 - Observability: `otel`, Prometheus, pprof
 
 ### 6.2 Persistence
-- Postgres (production)
-- SQLite (local single-node dev)
+- PostgreSQL (all environments)
 
 ### 6.3 Security
 - API keys per user/project
@@ -109,7 +108,7 @@ The solution will be **dockerized**, self-hostable, and optimized for **low-late
 
 1. **MVP (Core Chat + Ollama)**
    - `/v1/chat` streaming endpoint
-   - Memory (in-SQLite)  
+   - Memory (in-PostgreSQL)  
 2. **RAG**
    - Embeddings via Ollama  
    - Qdrant/pgvector integration  

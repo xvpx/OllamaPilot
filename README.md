@@ -27,7 +27,7 @@ ollamapilot/
 ├── internal/
 │   ├── api/                        # HTTP handlers and routing
 │   ├── config/                     # Configuration management
-│   ├── database/                   # Database connections (PostgreSQL/SQLite)
+│   ├── database/                   # Database connections (PostgreSQL)
 │   ├── models/                     # Data models
 │   ├── services/                   # Business logic services
 │   │   ├── chat.go                 # Chat orchestration
@@ -142,7 +142,7 @@ curl http://localhost:8080/v1/memory/gaps/abc123?threshold=1h
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_TYPE` | `postgres` | Database type (postgres/sqlite) |
+| `DB_TYPE` | `postgres` | Database type (postgres) |
 | `DB_HOST` | `postgres` | PostgreSQL host |
 | `DB_NAME` | `ollamapilot` | Database name |
 | `DB_USER` | `postgres` | Database user |

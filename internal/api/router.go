@@ -62,24 +62,11 @@ func (rt *Router) SetupRoutes() http.Handler {
 		http.ServeFile(w, r, filepath.Join(workDir, "app.js"))
 	})
 
-	// Health check handlers - only works with SQLite for now
-	if sqliteDB, ok := rt.db.(*database.DB); ok {
-		healthHandler := handlers.NewHealthHandler(sqliteDB, rt.cfg, rt.logger)
-		r.Get("/health", healthHandler.HealthCheck)
-		r.Get("/ready", healthHandler.ReadinessCheck)
-		r.Get("/live", healthHandler.LivenessCheck)
-	} else {
-		// For PostgreSQL, provide basic health endpoints
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-			utils.WriteSuccess(w, map[string]string{"status": "ok", "database": "postgresql"})
-		})
-		r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
-			utils.WriteSuccess(w, map[string]string{"status": "ready", "database": "postgresql"})
-		})
-		r.Get("/live", func(w http.ResponseWriter, r *http.Request) {
-			utils.WriteSuccess(w, map[string]string{"status": "live", "database": "postgresql"})
-		})
-	}
+	// Health check handlers
+	healthHandler := handlers.NewHealthHandler(rt.db, rt.cfg, rt.logger)
+	r.Get("/health", healthHandler.HealthCheck)
+	r.Get("/ready", healthHandler.ReadinessCheck)
+	r.Get("/live", healthHandler.LivenessCheck)
 
 	// API v1 routes
 	r.Route("/v1", func(r chi.Router) {
@@ -94,7 +81,7 @@ func (rt *Router) SetupRoutes() http.Handler {
 		r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
 		r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
 		
-		// Model management handlers - works with both SQLite and PostgreSQL
+		// Model management handlers
 		modelsHandler := handlers.NewModelsHandler(rt.db, rt.cfg, rt.logger)
 		
 		// Model endpoints
