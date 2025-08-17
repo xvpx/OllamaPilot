@@ -3,8 +3,8 @@ FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for SQLite
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+# Install build dependencies
+RUN apk add --no-cache gcc musl-dev
 
 # Copy go mod file and sum if it exists
 COPY go.mod ./
@@ -16,7 +16,7 @@ COPY . .
 # Download dependencies and generate go.sum
 RUN go mod tidy && go mod download
 
-# Build the application with CGO enabled for SQLite
+# Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o main ./cmd/api
 
 # Final stage

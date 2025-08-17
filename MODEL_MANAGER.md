@@ -314,7 +314,7 @@ curl -X POST http://localhost:8081/v1/chat \
 curl -X GET http://localhost:11434/api/tags
 
 # Check database
-sqlite3 ./data/chat.db "SELECT * FROM models;"
+psql -h localhost -U postgres -d ollamapilot -c "SELECT * FROM models;"
 
 # Check server logs
 tail -f ./logs/app.log

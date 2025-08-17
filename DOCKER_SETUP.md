@@ -207,13 +207,13 @@ docker exec -i ollamapilot-postgres psql -U postgres ollamapilot < backup.sql
 
 ### Environment Switching
 
-Switch between SQLite and PostgreSQL:
+PostgreSQL Configuration:
 ```bash
 # PostgreSQL
 cp .env.postgres .env
 docker-compose -f docker-compose.postgres.yml up -d
 
-# SQLite
+# PostgreSQL (default)
 cp .env.example .env
 docker-compose up -d
 ```
@@ -259,12 +259,9 @@ Monitor these metrics:
 - Memory usage
 - Storage growth
 
-## Migration from SQLite
+## PostgreSQL Setup
 
-To migrate existing SQLite data to PostgreSQL:
-
-1. **Export SQLite data:**
-   ```bash
+PostgreSQL is now the default and only supported database:
    # This would require a custom migration script
    # Not implemented in this version
    ```

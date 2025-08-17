@@ -25,15 +25,8 @@ type ChatService struct {
 
 // NewChatService creates a new chat service
 func NewChatService(db database.Database, ollamaClient *OllamaClient, embeddingService *EmbeddingService, cfg *config.Config, logger *utils.Logger) *ChatService {
-	// Create model manager - only works with SQLite for now
-	var modelManager *ModelManager
-	if sqliteDB, ok := db.(*database.DB); ok {
-		modelManager = NewModelManager(sqliteDB, ollamaClient, logger)
-	} else {
-		// For PostgreSQL, we'll create a minimal model manager or skip it
-		modelManager = nil
-	}
-	
+	// Create model manager
+	modelManager := NewModelManager(db, ollamaClient, logger)
 	semanticMemory := NewSemanticMemoryServiceWithModel(db, embeddingService, logger, cfg.EmbeddingModel)
 	
 	return &ChatService{

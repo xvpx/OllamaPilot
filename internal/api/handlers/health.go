@@ -14,13 +14,13 @@ import (
 
 // HealthHandler handles health check requests
 type HealthHandler struct {
-	db           *database.DB
+	db           database.Database
 	ollamaClient *services.OllamaClient
 	logger       *utils.Logger
 }
 
 // NewHealthHandler creates a new health handler
-func NewHealthHandler(db *database.DB, cfg *config.Config, logger *utils.Logger) *HealthHandler {
+func NewHealthHandler(db database.Database, cfg *config.Config, logger *utils.Logger) *HealthHandler {
 	// Create Ollama client for health checks
 	ollamaClient := services.NewOllamaClient(cfg.OllamaHost, cfg.OllamaTimeout, logger)
 
@@ -70,8 +70,16 @@ func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Add metadata
 	if h.db != nil {
-		if version, err := h.db.GetVersion(); err == nil {
-			response.Metadata["sqlite_version"] = version
+		if pgDB, ok := h.db.(*database.PostgresDB); ok {
+			if version, err := pgDB.GetVersion(); err == nil {
+				response.Metadata["postgres_version"] = version
+			}
+			// Check pgvector extension
+			if err := pgDB.CheckPgvectorExtension(); err == nil {
+				response.Metadata["pgvector_enabled"] = true
+			} else {
+				response.Metadata["pgvector_enabled"] = false
+			}
 		}
 	}
 
