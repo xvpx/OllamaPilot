@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -9,7 +10,22 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// DB wraps the sql.DB connection
+// Database interface for common database operations
+type Database interface {
+	Close() error
+	HealthCheck() error
+	GetVersion() (string, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	Begin() (*sql.Tx, error)
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
+// DB wraps the sql.DB connection for SQLite
 type DB struct {
 	*sql.DB
 }
@@ -71,4 +87,11 @@ func (db *DB) GetVersion() (string, error) {
 		return "", fmt.Errorf("failed to get SQLite version: %w", err)
 	}
 	return version, nil
+}
+
+// RunMigrations runs SQLite migrations (placeholder for compatibility)
+func (db *DB) RunMigrations() error {
+	// This would run the existing SQLite migrations
+	// For now, we'll keep the existing migration system
+	return nil
 }

@@ -86,13 +86,35 @@ func (c *OllamaClient) HealthCheck(ctx context.Context) error {
 
 // Chat sends a chat request to Ollama (non-streaming)
 func (c *OllamaClient) Chat(ctx context.Context, req models.ChatRequest, messages []models.Message) (*OllamaChatResponse, error) {
+	return c.ChatWithContext(ctx, req, messages, "")
+}
+
+// ChatWithContext sends a chat request to Ollama with optional semantic context
+func (c *OllamaClient) ChatWithContext(ctx context.Context, req models.ChatRequest, messages []models.Message, semanticContext string) (*OllamaChatResponse, error) {
 	// Convert messages to Ollama format
 	ollamaMessages := c.convertMessages(messages)
 	
-	// Add the current user message
+	// Prepare the user message content
+	userContent := req.Message
+	
+	// If we have semantic context, inject it into the conversation
+	if semanticContext != "" {
+		userContent = fmt.Sprintf(`Based on the following relevant context from our previous conversations:
+
+%s
+
+Current question: %s`, semanticContext, req.Message)
+		
+		c.logger.Debug().
+			Str("session_id", req.SessionID).
+			Int("context_length", len(semanticContext)).
+			Msg("Injecting semantic context into user message")
+	}
+	
+	// Add the current user message (with context if available)
 	ollamaMessages = append(ollamaMessages, OllamaMessage{
 		Role:    "user",
-		Content: req.Message,
+		Content: userContent,
 	})
 
 	ollamaReq := OllamaChatRequest{
@@ -146,15 +168,37 @@ func (c *OllamaClient) Chat(ctx context.Context, req models.ChatRequest, message
 
 // ChatStream sends a streaming chat request to Ollama
 func (c *OllamaClient) ChatStream(ctx context.Context, req models.ChatRequest, messages []models.Message, responseChan chan<- models.StreamResponse) error {
+	return c.ChatStreamWithContext(ctx, req, messages, "", responseChan)
+}
+
+// ChatStreamWithContext sends a streaming chat request to Ollama with optional semantic context
+func (c *OllamaClient) ChatStreamWithContext(ctx context.Context, req models.ChatRequest, messages []models.Message, semanticContext string, responseChan chan<- models.StreamResponse) error {
 	defer close(responseChan)
 
 	// Convert messages to Ollama format
 	ollamaMessages := c.convertMessages(messages)
 	
-	// Add the current user message
+	// Prepare the user message content
+	userContent := req.Message
+	
+	// If we have semantic context, inject it into the conversation
+	if semanticContext != "" {
+		userContent = fmt.Sprintf(`Based on the following relevant context from our previous conversations:
+
+%s
+
+Current question: %s`, semanticContext, req.Message)
+		
+		c.logger.Debug().
+			Str("session_id", req.SessionID).
+			Int("context_length", len(semanticContext)).
+			Msg("Injecting semantic context into streaming user message")
+	}
+	
+	// Add the current user message (with context if available)
 	ollamaMessages = append(ollamaMessages, OllamaMessage{
 		Role:    "user",
-		Content: req.Message,
+		Content: userContent,
 	})
 
 	ollamaReq := OllamaChatRequest{

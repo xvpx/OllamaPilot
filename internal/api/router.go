@@ -16,13 +16,13 @@ import (
 
 // Router holds the router configuration and dependencies
 type Router struct {
-	db     *database.DB
+	db     database.Database
 	cfg    *config.Config
 	logger *utils.Logger
 }
 
 // NewRouter creates a new router instance
-func NewRouter(db *database.DB, cfg *config.Config, logger *utils.Logger) *Router {
+func NewRouter(db database.Database, cfg *config.Config, logger *utils.Logger) *Router {
 	return &Router{
 		db:     db,
 		cfg:    cfg,
@@ -62,11 +62,24 @@ func (rt *Router) SetupRoutes() http.Handler {
 		http.ServeFile(w, r, filepath.Join(workDir, "app.js"))
 	})
 
-	// Health check handlers
-	healthHandler := handlers.NewHealthHandler(rt.db, rt.cfg, rt.logger)
-	r.Get("/health", healthHandler.HealthCheck)
-	r.Get("/ready", healthHandler.ReadinessCheck)
-	r.Get("/live", healthHandler.LivenessCheck)
+	// Health check handlers - only works with SQLite for now
+	if sqliteDB, ok := rt.db.(*database.DB); ok {
+		healthHandler := handlers.NewHealthHandler(sqliteDB, rt.cfg, rt.logger)
+		r.Get("/health", healthHandler.HealthCheck)
+		r.Get("/ready", healthHandler.ReadinessCheck)
+		r.Get("/live", healthHandler.LivenessCheck)
+	} else {
+		// For PostgreSQL, provide basic health endpoints
+		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+			utils.WriteSuccess(w, map[string]string{"status": "ok", "database": "postgresql"})
+		})
+		r.Get("/ready", func(w http.ResponseWriter, r *http.Request) {
+			utils.WriteSuccess(w, map[string]string{"status": "ready", "database": "postgresql"})
+		})
+		r.Get("/live", func(w http.ResponseWriter, r *http.Request) {
+			utils.WriteSuccess(w, map[string]string{"status": "live", "database": "postgresql"})
+		})
+	}
 
 	// API v1 routes
 	r.Route("/v1", func(r chi.Router) {
@@ -81,7 +94,7 @@ func (rt *Router) SetupRoutes() http.Handler {
 		r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
 		r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
 		
-		// Model management handlers
+		// Model management handlers - works with both SQLite and PostgreSQL
 		modelsHandler := handlers.NewModelsHandler(rt.db, rt.cfg, rt.logger)
 		
 		// Model endpoints
@@ -109,6 +122,12 @@ func (rt *Router) SetupRoutes() http.Handler {
 		// Model deletion endpoints
 		r.Delete("/models/{modelID}/hard", modelsHandler.HardDeleteModel) // Hard delete
 		r.Post("/models/{modelID}/restore", modelsHandler.RestoreModel)   // Restore soft-deleted model
+		
+		// Semantic memory endpoints
+		r.Post("/memory/search", chatHandler.SearchMemory)
+		r.Get("/memory/summaries", chatHandler.GetMemorySummaries)
+		r.Post("/memory/summaries", chatHandler.CreateMemorySummary)
+		r.Get("/memory/gaps/{sessionID}", chatHandler.GetMemoryGaps)
 	})
 
 	// Add a catch-all route for undefined endpoints

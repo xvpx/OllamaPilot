@@ -630,10 +630,12 @@ body {
     background: var(--bg-secondary);
     border-radius: 12px;
     width: 90%;
-    max-width: 600px;
-    max-height: 80vh;
+    max-width: 700px;
+    max-height: 95vh;
     overflow: hidden;
     box-shadow: 0 20px 25px -5px var(--shadow-lg), 0 10px 10px -5px var(--shadow);
+    display: flex;
+    flex-direction: column;
 }
 
 .settings-header {
@@ -670,8 +672,9 @@ body {
 
 .settings-body {
     padding: 24px;
-    max-height: 60vh;
+    flex: 1;
     overflow-y: auto;
+    min-height: 0;
 }
 
 .setting-group {
@@ -829,7 +832,7 @@ body {
 
 .models-container {
     margin-top: 16px;
-    max-height: 400px;
+    max-height: 500px;
     overflow-y: auto;
     border: 1px solid var(--border-primary);
     border-radius: 6px;
@@ -1170,4 +1173,375 @@ body {
         min-width: auto;
         max-width: none;
     }
+}
+
+/* Available Models Section Styles */
+.available-models-section {
+    margin-top: 16px;
+}
+
+.available-models-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.available-models-header h5 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.available-models-search {
+    margin-bottom: 16px;
+}
+
+.search-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.search-icon {
+    position: absolute;
+    left: 12px;
+    color: var(--text-tertiary);
+    z-index: 1;
+}
+
+.search-input {
+    width: 100%;
+    padding: 8px 12px 8px 36px;
+    border: 1px solid var(--border-secondary);
+    border-radius: 6px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.search-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.1);
+}
+
+.search-input::placeholder {
+    color: var(--text-tertiary);
+}
+
+.clear-search-btn {
+    position: absolute;
+    right: 8px;
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    font-size: 16px;
+    line-height: 1;
+    transition: all 0.2s;
+}
+
+.clear-search-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.clear-search-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.available-models-list {
+    max-height: 500px;
+    overflow-y: auto;
+    border: 1px solid var(--border-primary);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+
+.model-category {
+    margin-bottom: 16px;
+}
+
+.model-category:last-child {
+    margin-bottom: 0;
+}
+
+.category-header {
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-primary);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.category-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: block;
+    margin-bottom: 2px;
+}
+
+.category-description {
+    font-size: 12px;
+    color: var(--text-secondary);
+    display: block;
+}
+
+.available-model-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-primary);
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.available-model-item:last-child {
+    border-bottom: none;
+}
+
+.available-model-item:hover {
+    background: var(--bg-quaternary);
+}
+
+.available-model-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.available-model-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.available-model-description {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 2px;
+    line-height: 1.3;
+}
+
+.available-model-size {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+
+.download-model-btn {
+    padding: 6px 12px;
+    background: var(--accent-primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    margin-left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.download-model-btn:hover:not(:disabled) {
+    background: var(--accent-secondary);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(16, 163, 127, 0.3);
+}
+
+.download-model-btn:disabled {
+    background: var(--border-secondary);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.available-models-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.available-models-error {
+    padding: 16px;
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+    color: var(--error);
+    border-radius: 6px;
+    font-size: 14px;
+    text-align: center;
+}
+
+/* Model Actions Dropdown */
+.model-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.model-actions-btn {
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-secondary);
+    border-radius: 4px;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.model-actions-btn:hover {
+    background: var(--bg-quaternary);
+    border-color: var(--text-tertiary);
+}
+
+.model-actions-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px var(--shadow-lg);
+    z-index: 1000;
+    min-width: 150px;
+    display: none;
+    padding: 4px 0;
+}
+
+.model-actions-menu.active {
+    display: block;
+}
+
+.model-actions-menu button {
+    width: 100%;
+    padding: 8px 12px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 12px;
+    text-align: left;
+    transition: all 0.2s;
+}
+
+.model-actions-menu button:hover {
+    background: var(--bg-tertiary);
+}
+
+.model-actions-menu button.primary {
+    color: var(--accent-primary);
+}
+
+.model-actions-menu button.danger {
+    color: var(--error);
+}
+
+.model-actions-menu button.warning {
+    color: var(--warning);
+}
+
+/* Model Configuration Panel */
+.model-config-panel {
+    display: none;
+    margin-top: 8px;
+    padding: 12px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.model-config-panel.active {
+    display: block;
+}
+
+.config-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.config-row:last-child {
+    margin-bottom: 0;
+}
+
+.config-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.config-value {
+    color: var(--text-primary);
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+/* Model Download Progress */
+.model-download-progress {
+    margin-top: 8px;
+}
+
+.download-progress-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--border-primary);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.download-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    border-radius: 2px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+/* Sync Status Messages */
+.sync-status {
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    margin-bottom: 12px;
+    font-weight: 500;
+}
+
+.sync-status.success {
+    background: var(--success-bg);
+    border: 1px solid var(--success-border);
+    color: var(--success);
+}
+
+.sync-status.error {
+    background: var(--error-bg);
+    border: 1px solid var(--error-border);
+    color: var(--error);
+}
+
+.sync-status.warning {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    color: var(--warning);
+}
+
+.sync-status.info {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    color: var(--text-primary);
 }

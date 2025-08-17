@@ -15,6 +15,15 @@ type Config struct {
 	Environment string `env:"ENV" envDefault:"development"`
 
 	// Database configuration
+	DBType     string `env:"DB_TYPE" envDefault:"postgres"`
+	DBHost     string `env:"DB_HOST" envDefault:"localhost"`
+	DBPort     string `env:"DB_PORT" envDefault:"5432"`
+	DBName     string `env:"DB_NAME" envDefault:"ollamapilot"`
+	DBUser     string `env:"DB_USER" envDefault:"postgres"`
+	DBPassword string `env:"DB_PASSWORD" envDefault:""`
+	DBSSLMode  string `env:"DB_SSL_MODE" envDefault:"disable"`
+	
+	// Legacy SQLite support
 	DBPath string `env:"DB_PATH" envDefault:"./data/chat.db"`
 
 	// Ollama configuration
@@ -29,6 +38,11 @@ type Config struct {
 	MaxConcurrentChats int           `env:"MAX_CONCURRENT_CHATS" envDefault:"100"`
 	ReadTimeout        time.Duration `env:"READ_TIMEOUT" envDefault:"30s"`
 	WriteTimeout       time.Duration `env:"WRITE_TIMEOUT" envDefault:"30s"`
+	
+	// Semantic Memory configuration
+	EnableSemanticMemory bool   `env:"ENABLE_SEMANTIC_MEMORY" envDefault:"true"`
+	EmbeddingModel       string `env:"EMBEDDING_MODEL" envDefault:"nomic-embed-text"`
+	MaxContextResults    int    `env:"MAX_CONTEXT_RESULTS" envDefault:"5"`
 }
 
 // LoadConfig loads configuration from environment variables
@@ -54,8 +68,22 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("PORT cannot be empty")
 	}
 
-	if c.DBPath == "" {
-		return fmt.Errorf("DB_PATH cannot be empty")
+	if c.DBType == "postgres" {
+		if c.DBHost == "" {
+			return fmt.Errorf("DB_HOST cannot be empty for PostgreSQL")
+		}
+		if c.DBName == "" {
+			return fmt.Errorf("DB_NAME cannot be empty for PostgreSQL")
+		}
+		if c.DBUser == "" {
+			return fmt.Errorf("DB_USER cannot be empty for PostgreSQL")
+		}
+	} else if c.DBType == "sqlite" {
+		if c.DBPath == "" {
+			return fmt.Errorf("DB_PATH cannot be empty for SQLite")
+		}
+	} else {
+		return fmt.Errorf("unsupported DB_TYPE: %s (supported: postgres, sqlite)", c.DBType)
 	}
 
 	if c.OllamaHost == "" {
@@ -77,4 +105,24 @@ func (c *Config) IsDevelopment() bool {
 // IsProduction returns true if running in production mode
 func (c *Config) IsProduction() bool {
 	return c.Environment == "production"
+}
+
+// GetDatabaseDSN returns the database connection string
+func (c *Config) GetDatabaseDSN() string {
+	if c.DBType == "postgres" {
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName, c.DBSSLMode)
+	}
+	// Default to SQLite for backward compatibility
+	return c.DBPath
+}
+
+// IsPostgreSQL returns true if using PostgreSQL
+func (c *Config) IsPostgreSQL() bool {
+	return c.DBType == "postgres"
+}
+
+// IsSQLite returns true if using SQLite
+func (c *Config) IsSQLite() bool {
+	return c.DBType == "sqlite"
 }

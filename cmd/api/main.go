@@ -32,7 +32,7 @@ func main() {
 		Msg("Starting Chat Ollama API server")
 
 	// Initialize database
-	db, err := database.NewSQLiteDB(cfg.DBPath)
+	db, err := database.NewDatabase(cfg)
 	if err != nil {
 		logger.Fatal().Err(err).Msg("Failed to initialize database")
 	}
@@ -42,11 +42,21 @@ func main() {
 		}
 	}()
 
-	logger.Info().Str("db_path", cfg.DBPath).Msg("Database initialized")
+	if cfg.IsPostgreSQL() {
+		logger.Info().
+			Str("db_type", "postgresql").
+			Str("db_host", cfg.DBHost).
+			Str("db_name", cfg.DBName).
+			Msg("Database initialized")
+	} else {
+		logger.Info().
+			Str("db_type", "sqlite").
+			Str("db_path", cfg.DBPath).
+			Msg("Database initialized")
+	}
 
 	// Run database migrations
-	migrationRunner := database.NewMigrationRunner(db)
-	if err := migrationRunner.RunMigrations("./migrations"); err != nil {
+	if err := database.RunMigrations(db, cfg); err != nil {
 		logger.Fatal().Err(err).Msg("Failed to run database migrations")
 	}
 
