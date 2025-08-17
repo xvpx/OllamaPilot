@@ -8,6 +8,8 @@ require (
 	github.com/caarlos0/env/v10 v10.0.0
 	github.com/google/uuid v1.6.0
 	github.com/rs/zerolog v1.32.0
+	github.com/lib/pq v1.10.9
+	github.com/pgvector/pgvector-go v0.1.1
 	modernc.org/sqlite v1.29.1
 )
 

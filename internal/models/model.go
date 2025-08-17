@@ -6,22 +6,24 @@ import (
 
 // Model represents a language model with metadata
 type Model struct {
-	ID          string    `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	DisplayName string    `json:"display_name" db:"display_name"`
-	Description string    `json:"description" db:"description"`
-	Size        int64     `json:"size" db:"size"`
-	Family      string    `json:"family" db:"family"`
-	Format      string    `json:"format" db:"format"`
-	Parameters  string    `json:"parameters" db:"parameters"`
-	Quantization string   `json:"quantization" db:"quantization"`
-	Status      string    `json:"status" db:"status"` // available, downloading, installing, error
-	Progress    float64   `json:"progress,omitempty" db:"-"` // Download progress percentage (0-100)
-	IsDefault   bool      `json:"is_default" db:"is_default"`
-	IsEnabled   bool      `json:"is_enabled" db:"is_enabled"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
-	LastUsedAt  *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
+	ID                   string    `json:"id" db:"id"`
+	Name                 string    `json:"name" db:"name"`
+	DisplayName          string    `json:"display_name" db:"display_name"`
+	Description          string    `json:"description" db:"description"`
+	Size                 int64     `json:"size" db:"size"`
+	Family               string    `json:"family" db:"family"`
+	Format               string    `json:"format" db:"format"`
+	Parameters           string    `json:"parameters" db:"parameters"`
+	Quantization         string    `json:"quantization" db:"quantization"`
+	Status               string    `json:"status" db:"status"` // available, downloading, installing, error
+	Progress             float64   `json:"progress,omitempty" db:"-"` // Download progress percentage (0-100)
+	IsDefault            bool      `json:"is_default" db:"is_default"`
+	IsEnabled            bool      `json:"is_enabled" db:"is_enabled"`
+	SupportsEmbeddings   bool      `json:"supports_embeddings" db:"supports_embeddings"`
+	EmbeddingDimensions  int       `json:"embedding_dimensions" db:"embedding_dimensions"`
+	CreatedAt            time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at" db:"updated_at"`
+	LastUsedAt           *time.Time `json:"last_used_at,omitempty" db:"last_used_at"`
 }
 
 // ModelConfig represents model configuration settings

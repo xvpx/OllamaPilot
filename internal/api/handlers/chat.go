@@ -16,21 +16,29 @@ import (
 
 // ChatHandler handles chat-related requests
 type ChatHandler struct {
-	chatService *services.ChatService
-	logger      *utils.Logger
+	chatService    *services.ChatService
+	semanticMemory *services.SemanticMemoryService
+	logger         *utils.Logger
 }
 
 // NewChatHandler creates a new chat handler
-func NewChatHandler(db *database.DB, cfg *config.Config, logger *utils.Logger) *ChatHandler {
+func NewChatHandler(db database.Database, cfg *config.Config, logger *utils.Logger) *ChatHandler {
 	// Create Ollama client
 	ollamaClient := services.NewOllamaClient(cfg.OllamaHost, cfg.OllamaTimeout, logger)
 	
+	// Create embedding service
+	embeddingService := services.NewEmbeddingService(cfg, logger)
+	
 	// Create chat service
-	chatService := services.NewChatService(db, ollamaClient, logger)
+	chatService := services.NewChatService(db, ollamaClient, embeddingService, cfg, logger)
+	
+	// Create semantic memory service with configured embedding model
+	semanticMemory := services.NewSemanticMemoryServiceWithModel(db, embeddingService, logger, cfg.EmbeddingModel)
 
 	return &ChatHandler{
-		chatService: chatService,
-		logger:      logger.WithComponent("chat_handler"),
+		chatService:    chatService,
+		semanticMemory: semanticMemory,
+		logger:         logger.WithComponent("chat_handler"),
 	}
 }
 
@@ -297,5 +305,210 @@ func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 	utils.WriteSuccess(w, map[string]string{
 		"message": "Session deleted successfully",
 		"session_id": sessionID,
+	})
+}
+
+// SearchMemory handles POST /v1/memory/search
+func (h *ChatHandler) SearchMemory(w http.ResponseWriter, r *http.Request) {
+	logger := utils.FromContext(r.Context())
+	if logger == nil {
+		logger = h.logger
+	}
+
+	var req struct {
+		Query     string `json:"query"`
+		SessionID string `json:"session_id,omitempty"`
+		Limit     int    `json:"limit,omitempty"`
+	}
+
+	if err := utils.ParseJSON(r, &req); err != nil {
+		logger.Error().Err(err).Msg("Failed to parse memory search request")
+		apiErr := utils.NewValidationError("Invalid JSON in request body", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	if req.Query == "" {
+		apiErr := utils.NewValidationError("Query field is required", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 10 // Default limit
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	logger.Info().
+		Str("query", req.Query).
+		Str("session_id", req.SessionID).
+		Int("limit", req.Limit).
+		Msg("Searching semantic memory")
+
+	results, err := h.semanticMemory.SearchSimilarMessages(ctx, req.Query, req.Limit, req.SessionID)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to search semantic memory")
+		apiErr := utils.NewInternalError("Failed to search memory", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	logger.Info().
+		Str("query", req.Query).
+		Int("results_count", len(results)).
+		Msg("Memory search completed")
+
+	utils.WriteSuccess(w, map[string]interface{}{
+		"query":   req.Query,
+		"results": results,
+		"count":   len(results),
+	})
+}
+
+// GetMemorySummaries handles GET /v1/memory/summaries
+func (h *ChatHandler) GetMemorySummaries(w http.ResponseWriter, r *http.Request) {
+	logger := utils.FromContext(r.Context())
+	if logger == nil {
+		logger = h.logger
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	summaryType := r.URL.Query().Get("type")
+
+	logger.Info().
+		Str("session_id", sessionID).
+		Str("summary_type", summaryType).
+		Msg("Getting memory summaries")
+
+	// For now, return empty summaries as this requires database access
+	// TODO: Implement proper memory summaries retrieval
+	summaries := []interface{}{}
+
+	logger.Info().
+		Int("summaries_count", len(summaries)).
+		Msg("Memory summaries retrieved")
+
+	utils.WriteSuccess(w, map[string]interface{}{
+		"summaries": summaries,
+		"count":     len(summaries),
+	})
+}
+
+// CreateMemorySummary handles POST /v1/memory/summaries
+func (h *ChatHandler) CreateMemorySummary(w http.ResponseWriter, r *http.Request) {
+	logger := utils.FromContext(r.Context())
+	if logger == nil {
+		logger = h.logger
+	}
+
+	var req struct {
+		SessionID    string `json:"session_id"`
+		SummaryType  string `json:"summary_type"`
+		Title        string `json:"title,omitempty"`
+		Content      string `json:"content"`
+		MessageCount int    `json:"message_count,omitempty"`
+	}
+
+	if err := utils.ParseJSON(r, &req); err != nil {
+		logger.Error().Err(err).Msg("Failed to parse memory summary request")
+		apiErr := utils.NewValidationError("Invalid JSON in request body", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	if req.Content == "" {
+		apiErr := utils.NewValidationError("Content field is required", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	if req.SummaryType == "" {
+		req.SummaryType = "conversation"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	logger.Info().
+		Str("session_id", req.SessionID).
+		Str("summary_type", req.SummaryType).
+		Msg("Creating memory summary")
+
+	summary, err := h.semanticMemory.CreateMemorySummary(
+		ctx,
+		req.SessionID,
+		req.SummaryType,
+		req.Title,
+		req.Content,
+		time.Now(),
+		time.Now(),
+		req.MessageCount,
+	)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to create memory summary")
+		apiErr := utils.NewInternalError("Failed to create memory summary", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	logger.Info().
+		Str("summary_id", summary.ID).
+		Str("session_id", req.SessionID).
+		Msg("Memory summary created")
+
+	utils.WriteSuccess(w, summary)
+}
+
+// GetMemoryGaps handles GET /v1/memory/gaps/{sessionID}
+func (h *ChatHandler) GetMemoryGaps(w http.ResponseWriter, r *http.Request) {
+	logger := utils.FromContext(r.Context())
+	if logger == nil {
+		logger = h.logger
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		apiErr := utils.NewValidationError("Session ID is required", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	logger.Info().
+		Str("session_id", sessionID).
+		Msg("Detecting memory gaps")
+
+	// Default threshold of 1 hour
+	threshold := 1 * time.Hour
+	if thresholdParam := r.URL.Query().Get("threshold"); thresholdParam != "" {
+		if parsedThreshold, err := time.ParseDuration(thresholdParam); err == nil {
+			threshold = parsedThreshold
+		}
+	}
+
+	gaps, err := h.semanticMemory.DetectMemoryGaps(ctx, sessionID, threshold)
+	if err != nil {
+		logger.Error().Err(err).
+			Str("session_id", sessionID).
+			Msg("Failed to detect memory gaps")
+		apiErr := utils.NewInternalError("Failed to detect memory gaps", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
+
+	logger.Info().
+		Str("session_id", sessionID).
+		Int("gaps_count", len(gaps)).
+		Msg("Memory gaps detected")
+
+	utils.WriteSuccess(w, map[string]interface{}{
+		"session_id": sessionID,
+		"gaps":       gaps,
+		"count":      len(gaps),
+		"threshold":  threshold.String(),
 	})
 }

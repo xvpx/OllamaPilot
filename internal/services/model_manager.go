@@ -18,7 +18,7 @@ import (
 
 // ModelManager handles model management operations
 type ModelManager struct {
-	db           *database.DB
+	db           database.Database
 	ollamaClient *OllamaClient
 	logger       *utils.Logger
 	downloadProgress map[string]float64 // Track download progress by model ID
@@ -32,7 +32,7 @@ type ModelManager struct {
 }
 
 // NewModelManager creates a new model manager
-func NewModelManager(db *database.DB, ollamaClient *OllamaClient, logger *utils.Logger) *ModelManager {
+func NewModelManager(db database.Database, ollamaClient *OllamaClient, logger *utils.Logger) *ModelManager {
 	return &ModelManager{
 		db:           db,
 		ollamaClient: ollamaClient,
@@ -151,9 +151,9 @@ func (m *ModelManager) SyncModels(ctx context.Context) error {
 // GetAllModels retrieves all models from the database
 func (m *ModelManager) GetAllModels(ctx context.Context) ([]models.Model, error) {
 	query := `
-		SELECT id, name, display_name, description, size, family, format, 
+		SELECT id, name, display_name, description, size, family, format,
 		       parameters, quantization, status, is_default, is_enabled,
-		       created_at, updated_at, last_used_at
+		       supports_embeddings, embedding_dimensions, created_at, updated_at, last_used_at
 		FROM models
 		ORDER BY is_default DESC, name ASC
 	`
@@ -173,7 +173,7 @@ func (m *ModelManager) GetAllModels(ctx context.Context) ([]models.Model, error)
 			&model.ID, &model.Name, &model.DisplayName, &model.Description,
 			&model.Size, &model.Family, &model.Format, &model.Parameters,
 			&model.Quantization, &model.Status, &model.IsDefault, &model.IsEnabled,
-			&model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
+			&model.SupportsEmbeddings, &model.EmbeddingDimensions, &model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan model: %w", err)
@@ -192,9 +192,9 @@ func (m *ModelManager) GetAllModels(ctx context.Context) ([]models.Model, error)
 // GetAvailableModels retrieves only available and enabled models
 func (m *ModelManager) GetAvailableModels(ctx context.Context) ([]models.Model, error) {
 	query := `
-		SELECT id, name, display_name, description, size, family, format, 
+		SELECT id, name, display_name, description, size, family, format,
 		       parameters, quantization, status, is_default, is_enabled,
-		       created_at, updated_at, last_used_at
+		       supports_embeddings, embedding_dimensions, created_at, updated_at, last_used_at
 		FROM models
 		WHERE status = 'available' AND is_enabled = TRUE
 		ORDER BY is_default DESC, name ASC
@@ -215,7 +215,7 @@ func (m *ModelManager) GetAvailableModels(ctx context.Context) ([]models.Model, 
 			&model.ID, &model.Name, &model.DisplayName, &model.Description,
 			&model.Size, &model.Family, &model.Format, &model.Parameters,
 			&model.Quantization, &model.Status, &model.IsDefault, &model.IsEnabled,
-			&model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
+			&model.SupportsEmbeddings, &model.EmbeddingDimensions, &model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan model: %w", err)
@@ -234,11 +234,11 @@ func (m *ModelManager) GetAvailableModels(ctx context.Context) ([]models.Model, 
 // GetModelByID retrieves a model by its ID
 func (m *ModelManager) GetModelByID(ctx context.Context, id string) (*models.Model, error) {
 	query := `
-		SELECT id, name, display_name, description, size, family, format, 
+		SELECT id, name, display_name, description, size, family, format,
 		       parameters, quantization, status, is_default, is_enabled,
-		       created_at, updated_at, last_used_at
+		       supports_embeddings, embedding_dimensions, created_at, updated_at, last_used_at
 		FROM models
-		WHERE id = ?
+		WHERE id = $1
 	`
 
 	var model models.Model
@@ -248,7 +248,7 @@ func (m *ModelManager) GetModelByID(ctx context.Context, id string) (*models.Mod
 		&model.ID, &model.Name, &model.DisplayName, &model.Description,
 		&model.Size, &model.Family, &model.Format, &model.Parameters,
 		&model.Quantization, &model.Status, &model.IsDefault, &model.IsEnabled,
-		&model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
+		&model.SupportsEmbeddings, &model.EmbeddingDimensions, &model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
 	)
 
 	if err != nil {
@@ -268,11 +268,11 @@ func (m *ModelManager) GetModelByID(ctx context.Context, id string) (*models.Mod
 // GetModelByName retrieves a model by its name
 func (m *ModelManager) GetModelByName(ctx context.Context, name string) (*models.Model, error) {
 	query := `
-		SELECT id, name, display_name, description, size, family, format, 
+		SELECT id, name, display_name, description, size, family, format,
 		       parameters, quantization, status, is_default, is_enabled,
-		       created_at, updated_at, last_used_at
+		       supports_embeddings, embedding_dimensions, created_at, updated_at, last_used_at
 		FROM models
-		WHERE name = ?
+		WHERE name = $1
 	`
 
 	var model models.Model
@@ -282,7 +282,7 @@ func (m *ModelManager) GetModelByName(ctx context.Context, name string) (*models
 		&model.ID, &model.Name, &model.DisplayName, &model.Description,
 		&model.Size, &model.Family, &model.Format, &model.Parameters,
 		&model.Quantization, &model.Status, &model.IsDefault, &model.IsEnabled,
-		&model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
+		&model.SupportsEmbeddings, &model.EmbeddingDimensions, &model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
 	)
 
 	if err != nil {
@@ -304,15 +304,15 @@ func (m *ModelManager) CreateModel(ctx context.Context, model models.Model) erro
 	query := `
 		INSERT INTO models (id, name, display_name, description, size, family, format,
 		                   parameters, quantization, status, is_default, is_enabled,
-		                   created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   supports_embeddings, embedding_dimensions, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 	`
 
 	_, err := m.db.ExecContext(ctx, query,
 		model.ID, model.Name, model.DisplayName, model.Description,
 		model.Size, model.Family, model.Format, model.Parameters,
 		model.Quantization, model.Status, model.IsDefault, model.IsEnabled,
-		model.CreatedAt, model.UpdatedAt,
+		model.SupportsEmbeddings, model.EmbeddingDimensions, model.CreatedAt, model.UpdatedAt,
 	)
 
 	if err != nil {
@@ -340,21 +340,26 @@ func (m *ModelManager) UpdateModel(ctx context.Context, id string, req models.Mo
 	setParts := []string{}
 	args := []interface{}{}
 
+	argIndex := 1
 	if req.DisplayName != nil {
-		setParts = append(setParts, "display_name = ?")
+		setParts = append(setParts, fmt.Sprintf("display_name = $%d", argIndex))
 		args = append(args, *req.DisplayName)
+		argIndex++
 	}
 	if req.Description != nil {
-		setParts = append(setParts, "description = ?")
+		setParts = append(setParts, fmt.Sprintf("description = $%d", argIndex))
 		args = append(args, *req.Description)
+		argIndex++
 	}
 	if req.IsDefault != nil {
-		setParts = append(setParts, "is_default = ?")
+		setParts = append(setParts, fmt.Sprintf("is_default = $%d", argIndex))
 		args = append(args, *req.IsDefault)
+		argIndex++
 	}
 	if req.IsEnabled != nil {
-		setParts = append(setParts, "is_enabled = ?")
+		setParts = append(setParts, fmt.Sprintf("is_enabled = $%d", argIndex))
 		args = append(args, *req.IsEnabled)
+		argIndex++
 	}
 
 	if len(setParts) == 0 {
@@ -364,7 +369,7 @@ func (m *ModelManager) UpdateModel(ctx context.Context, id string, req models.Mo
 	setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, id)
 
-	query := fmt.Sprintf("UPDATE models SET %s WHERE id = ?", strings.Join(setParts, ", "))
+	query := fmt.Sprintf("UPDATE models SET %s WHERE id = $%d", strings.Join(setParts, ", "), argIndex)
 
 	result, err := m.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -428,12 +433,12 @@ func (m *ModelManager) deleteModelFromDatabase(ctx context.Context, id string) e
 	defer tx.Rollback()
 
 	// Delete model config (CASCADE will handle this, but explicit is better)
-	if _, err := tx.ExecContext(ctx, "DELETE FROM model_configs WHERE model_id = ?", id); err != nil {
+	if _, err := tx.ExecContext(ctx, "DELETE FROM model_configs WHERE model_id = $1", id); err != nil {
 		return fmt.Errorf("failed to delete model config: %w", err)
 	}
 
 	// Delete the model itself
-	result, err := tx.ExecContext(ctx, "DELETE FROM models WHERE id = ?", id)
+	result, err := tx.ExecContext(ctx, "DELETE FROM models WHERE id = $1", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete model: %w", err)
 	}
@@ -496,7 +501,7 @@ func (m *ModelManager) GetModelConfig(ctx context.Context, modelID string) (*mod
 		SELECT id, model_id, temperature, top_p, top_k, repeat_penalty,
 		       context_length, max_tokens, system_prompt, created_at, updated_at
 		FROM model_configs
-		WHERE model_id = ?
+		WHERE model_id = $1
 	`
 
 	var config models.ModelConfig
@@ -546,7 +551,7 @@ func (m *ModelManager) CreateModelConfig(ctx context.Context, config models.Mode
 	query := `
 		INSERT INTO model_configs (id, model_id, temperature, top_p, top_k, repeat_penalty,
 		                          context_length, max_tokens, system_prompt, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
 
 	_, err := m.db.ExecContext(ctx, query,
@@ -568,33 +573,41 @@ func (m *ModelManager) UpdateModelConfig(ctx context.Context, modelID string, re
 	setParts := []string{}
 	args := []interface{}{}
 
+	argIndex := 1
 	if req.Temperature != nil {
-		setParts = append(setParts, "temperature = ?")
+		setParts = append(setParts, fmt.Sprintf("temperature = $%d", argIndex))
 		args = append(args, *req.Temperature)
+		argIndex++
 	}
 	if req.TopP != nil {
-		setParts = append(setParts, "top_p = ?")
+		setParts = append(setParts, fmt.Sprintf("top_p = $%d", argIndex))
 		args = append(args, *req.TopP)
+		argIndex++
 	}
 	if req.TopK != nil {
-		setParts = append(setParts, "top_k = ?")
+		setParts = append(setParts, fmt.Sprintf("top_k = $%d", argIndex))
 		args = append(args, *req.TopK)
+		argIndex++
 	}
 	if req.RepeatPenalty != nil {
-		setParts = append(setParts, "repeat_penalty = ?")
+		setParts = append(setParts, fmt.Sprintf("repeat_penalty = $%d", argIndex))
 		args = append(args, *req.RepeatPenalty)
+		argIndex++
 	}
 	if req.ContextLength != nil {
-		setParts = append(setParts, "context_length = ?")
+		setParts = append(setParts, fmt.Sprintf("context_length = $%d", argIndex))
 		args = append(args, *req.ContextLength)
+		argIndex++
 	}
 	if req.MaxTokens != nil {
-		setParts = append(setParts, "max_tokens = ?")
+		setParts = append(setParts, fmt.Sprintf("max_tokens = $%d", argIndex))
 		args = append(args, *req.MaxTokens)
+		argIndex++
 	}
 	if req.SystemPrompt != nil {
-		setParts = append(setParts, "system_prompt = ?")
+		setParts = append(setParts, fmt.Sprintf("system_prompt = $%d", argIndex))
 		args = append(args, *req.SystemPrompt)
+		argIndex++
 	}
 
 	if len(setParts) == 0 {
@@ -604,7 +617,7 @@ func (m *ModelManager) UpdateModelConfig(ctx context.Context, modelID string, re
 	setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, modelID)
 
-	query := fmt.Sprintf("UPDATE model_configs SET %s WHERE model_id = ?", strings.Join(setParts, ", "))
+	query := fmt.Sprintf("UPDATE model_configs SET %s WHERE model_id = $%d", strings.Join(setParts, ", "), argIndex)
 
 	result, err := m.db.ExecContext(ctx, query, args...)
 	if err != nil {
@@ -639,7 +652,7 @@ func (m *ModelManager) GetModelUsageStats(ctx context.Context, modelID string) (
 	query := `
 		SELECT model_id, total_messages, total_tokens, last_used_at
 		FROM model_usage_stats
-		WHERE model_id = ?
+		WHERE model_id = $1
 	`
 
 	var stats models.ModelUsageStats
@@ -673,7 +686,7 @@ func (m *ModelManager) GetDefaultModel(ctx context.Context) (*models.Model, erro
 	query := `
 		SELECT id, name, display_name, description, size, family, format,
 		       parameters, quantization, status, is_default, is_enabled,
-		       created_at, updated_at, last_used_at
+		       supports_embeddings, embedding_dimensions, created_at, updated_at, last_used_at
 		FROM models
 		WHERE is_default = TRUE AND is_enabled = TRUE AND status = 'available'
 		LIMIT 1
@@ -686,7 +699,7 @@ func (m *ModelManager) GetDefaultModel(ctx context.Context) (*models.Model, erro
 		&model.ID, &model.Name, &model.DisplayName, &model.Description,
 		&model.Size, &model.Family, &model.Format, &model.Parameters,
 		&model.Quantization, &model.Status, &model.IsDefault, &model.IsEnabled,
-		&model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
+		&model.SupportsEmbeddings, &model.EmbeddingDimensions, &model.CreatedAt, &model.UpdatedAt, &lastUsedAt,
 	)
 
 	if err != nil {
@@ -716,7 +729,7 @@ func (m *ModelManager) SetDefaultModel(ctx context.Context, modelID string) erro
 	}
 
 	// Update the model to be default (trigger will handle unsetting others)
-	query := `UPDATE models SET is_default = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	query := `UPDATE models SET is_default = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = $1`
 	
 	result, err := m.db.ExecContext(ctx, query, modelID)
 	if err != nil {
@@ -760,7 +773,7 @@ func (m *ModelManager) updateModelStatus(ctx context.Context, id, status string)
 		return fmt.Errorf("invalid model status: %s", status)
 	}
 
-	query := `UPDATE models SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	query := `UPDATE models SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	
 	result, err := m.db.ExecContext(ctx, query, status, id)
 	if err != nil {
@@ -799,7 +812,7 @@ func (m *ModelManager) generateDisplayName(modelName string) string {
 
 // updateModelSize updates the size of a model
 func (m *ModelManager) updateModelSize(ctx context.Context, id string, size int64) error {
-	query := `UPDATE models SET size = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+	query := `UPDATE models SET size = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`
 	
 	result, err := m.db.ExecContext(ctx, query, size, id)
 	if err != nil {
@@ -1012,8 +1025,8 @@ func (m *ModelManager) GetCacheInfo() map[string]interface{} {
 func (m *ModelManager) updateModelMetadata(ctx context.Context, id string, info models.OllamaModelDetailedInfo) error {
 	query := `
 		UPDATE models
-		SET family = ?, format = ?, parameters = ?, quantization = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
+		SET family = $1, format = $2, parameters = $3, quantization = $4, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $5
 	`
 	
 	result, err := m.db.ExecContext(ctx, query, info.Family, info.Format, info.Parameters, info.Quantization, id)

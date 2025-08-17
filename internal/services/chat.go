@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"chat_ollama/internal/config"
 	"chat_ollama/internal/database"
 	"chat_ollama/internal/models"
 	"chat_ollama/internal/utils"
@@ -14,20 +15,34 @@ import (
 
 // ChatService handles chat orchestration and message persistence
 type ChatService struct {
-	db           *database.DB
-	ollamaClient *OllamaClient
-	modelManager *ModelManager
-	logger       *utils.Logger
+	db             database.Database
+	ollamaClient   *OllamaClient
+	modelManager   *ModelManager
+	semanticMemory *SemanticMemoryService
+	logger         *utils.Logger
+	config         *config.Config
 }
 
 // NewChatService creates a new chat service
-func NewChatService(db *database.DB, ollamaClient *OllamaClient, logger *utils.Logger) *ChatService {
-	modelManager := NewModelManager(db, ollamaClient, logger)
+func NewChatService(db database.Database, ollamaClient *OllamaClient, embeddingService *EmbeddingService, cfg *config.Config, logger *utils.Logger) *ChatService {
+	// Create model manager - only works with SQLite for now
+	var modelManager *ModelManager
+	if sqliteDB, ok := db.(*database.DB); ok {
+		modelManager = NewModelManager(sqliteDB, ollamaClient, logger)
+	} else {
+		// For PostgreSQL, we'll create a minimal model manager or skip it
+		modelManager = nil
+	}
+	
+	semanticMemory := NewSemanticMemoryServiceWithModel(db, embeddingService, logger, cfg.EmbeddingModel)
+	
 	return &ChatService{
-		db:           db,
-		ollamaClient: ollamaClient,
-		modelManager: modelManager,
-		logger:       logger.WithComponent("chat_service"),
+		db:             db,
+		ollamaClient:   ollamaClient,
+		modelManager:   modelManager,
+		semanticMemory: semanticMemory,
+		logger:         logger.WithComponent("chat_service"),
+		config:         cfg,
 	}
 }
 
@@ -35,17 +50,23 @@ func NewChatService(db *database.DB, ollamaClient *OllamaClient, logger *utils.L
 func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (*models.ChatResponse, error) {
 	// Validate model if specified
 	if req.Model != "" {
-		if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
-			return nil, fmt.Errorf("invalid model: %w", err)
+		if s.modelManager != nil {
+			if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
+				return nil, fmt.Errorf("invalid model: %w", err)
+			}
 		}
 	} else {
 		// Use default model if none specified
-		defaultModel, err := s.modelManager.GetDefaultModel(ctx)
-		if err != nil {
-			s.logger.Warn().Err(err).Msg("No default model found, using fallback")
-			req.Model = "llama2:7b" // Fallback model
+		if s.modelManager != nil {
+			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
+			if err != nil {
+				s.logger.Warn().Err(err).Msg("No default model found, using fallback")
+				req.Model = "llama2:7b" // Fallback model
+			} else {
+				req.Model = defaultModel.Name
+			}
 		} else {
-			req.Model = defaultModel.Name
+			req.Model = "llama2:7b" // Fallback model when no model manager
 		}
 	}
 
@@ -60,10 +81,27 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 		return nil, fmt.Errorf("failed to get session messages: %w", err)
 	}
 
+	// Get relevant context from semantic memory if enabled
+	var relevantContext string
+	if s.config.EnableSemanticMemory && s.semanticMemory != nil {
+		context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, req.SessionID, s.config.MaxContextResults)
+		if err != nil {
+			s.logger.Warn().Err(err).Msg("Failed to retrieve semantic context, continuing without it")
+		} else if context != "" {
+			relevantContext = context
+			s.logger.Info().
+				Str("session_id", req.SessionID).
+				Int("context_length", len(context)).
+				Int("max_results", s.config.MaxContextResults).
+				Msg("Retrieved relevant context from semantic memory")
+		}
+	}
+
 	s.logger.Info().
 		Str("session_id", req.SessionID).
 		Str("model", req.Model).
 		Int("history_count", len(messages)).
+		Bool("has_semantic_context", relevantContext != "").
 		Msg("Processing chat request")
 
 	// Save user message
@@ -79,8 +117,8 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 		return nil, fmt.Errorf("failed to save user message: %w", err)
 	}
 
-	// Send to Ollama
-	ollamaResp, err := s.ollamaClient.Chat(ctx, req, messages)
+	// Send to Ollama with semantic context
+	ollamaResp, err := s.ollamaClient.ChatWithContext(ctx, req, messages, relevantContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get response from Ollama: %w", err)
 	}
@@ -98,6 +136,18 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 
 	if err := s.SaveMessage(ctx, assistantMessage); err != nil {
 		return nil, fmt.Errorf("failed to save assistant message: %w", err)
+	}
+
+	// Process messages for semantic memory (async)
+	if s.semanticMemory != nil {
+		go func() {
+			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), userMessage); err != nil {
+				s.logger.Error().Err(err).Str("message_id", userMessage.ID).Msg("Failed to process user message for semantic memory")
+			}
+			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), assistantMessage); err != nil {
+				s.logger.Error().Err(err).Str("message_id", assistantMessage.ID).Msg("Failed to process assistant message for semantic memory")
+			}
+		}()
 	}
 
 	s.logger.Info().
@@ -122,22 +172,28 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 
 	// Validate model if specified
 	if req.Model != "" {
-		if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
-			responseChan <- models.StreamResponse{
-				Type:      "error",
-				SessionID: req.SessionID,
-				Error:     fmt.Sprintf("Invalid model: %v", err),
+		if s.modelManager != nil {
+			if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
+				responseChan <- models.StreamResponse{
+					Type:      "error",
+					SessionID: req.SessionID,
+					Error:     fmt.Sprintf("Invalid model: %v", err),
+				}
+				return err
 			}
-			return err
 		}
 	} else {
 		// Use default model if none specified
-		defaultModel, err := s.modelManager.GetDefaultModel(ctx)
-		if err != nil {
-			s.logger.Warn().Err(err).Msg("No default model found, using fallback")
-			req.Model = "llama2:7b" // Fallback model
+		if s.modelManager != nil {
+			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
+			if err != nil {
+				s.logger.Warn().Err(err).Msg("No default model found, using fallback")
+				req.Model = "llama2:7b" // Fallback model
+			} else {
+				req.Model = defaultModel.Name
+			}
 		} else {
-			req.Model = defaultModel.Name
+			req.Model = "llama2:7b" // Fallback model when no model manager
 		}
 	}
 
@@ -189,9 +245,20 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 	// Create channel for Ollama responses
 	ollamaResponseChan := make(chan models.StreamResponse, 100)
 	
-	// Start streaming from Ollama
+	// Start streaming from Ollama with semantic context
 	go func() {
-		if err := s.ollamaClient.ChatStream(ctx, req, messages, ollamaResponseChan); err != nil {
+		// Get relevant context for streaming as well if enabled
+		var streamingContext string
+		if s.config.EnableSemanticMemory && s.semanticMemory != nil {
+			context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, req.SessionID, s.config.MaxContextResults)
+			if err != nil {
+				s.logger.Warn().Err(err).Msg("Failed to retrieve semantic context for streaming, continuing without it")
+			} else {
+				streamingContext = context
+			}
+		}
+		
+		if err := s.ollamaClient.ChatStreamWithContext(ctx, req, messages, streamingContext, ollamaResponseChan); err != nil {
 			s.logger.Error().Err(err).Str("session_id", req.SessionID).Msg("Ollama streaming failed")
 		}
 	}()
@@ -251,7 +318,7 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 func (s *ChatService) SaveMessage(ctx context.Context, message models.Message) error {
 	query := `
 		INSERT INTO messages (id, session_id, role, content, model, tokens_used, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
 
 	_, err := s.db.ExecContext(ctx, query,
@@ -282,7 +349,7 @@ func (s *ChatService) GetSessionMessages(ctx context.Context, sessionID string) 
 	query := `
 		SELECT id, session_id, role, content, model, tokens_used, created_at
 		FROM messages
-		WHERE session_id = ?
+		WHERE session_id = $1
 		ORDER BY created_at ASC
 	`
 
@@ -328,7 +395,7 @@ func (s *ChatService) GetSessionMessages(ctx context.Context, sessionID string) 
 func (s *ChatService) ensureSession(ctx context.Context, sessionID string) error {
 	// Check if session exists
 	var exists bool
-	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)", sessionID).Scan(&exists)
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)", sessionID).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("failed to check session existence: %w", err)
 	}
@@ -358,7 +425,7 @@ func (s *ChatService) ensureSession(ctx context.Context, sessionID string) error
 func (s *ChatService) CreateSession(ctx context.Context, session models.Session) error {
 	query := `
 		INSERT INTO sessions (id, title, created_at, updated_at)
-		VALUES (?, ?, ?, ?)
+		VALUES ($1, $2, $3, $4)
 	`
 
 	_, err := s.db.ExecContext(ctx, query,
@@ -423,9 +490,9 @@ func (s *ChatService) GetSessions(ctx context.Context) ([]models.Session, error)
 // UpdateSessionTitle updates the title of a session
 func (s *ChatService) UpdateSessionTitle(ctx context.Context, sessionID, title string) error {
 	query := `
-		UPDATE sessions 
-		SET title = ?, updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
+		UPDATE sessions
+		SET title = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
 	`
 
 	result, err := s.db.ExecContext(ctx, query, title, sessionID)
@@ -460,7 +527,7 @@ func (s *ChatService) DeleteSession(ctx context.Context, sessionID string) error
 	defer tx.Rollback()
 
 	// First, delete all messages for this session
-	deleteMessagesQuery := `DELETE FROM messages WHERE session_id = ?`
+	deleteMessagesQuery := `DELETE FROM messages WHERE session_id = $1`
 	result, err := tx.ExecContext(ctx, deleteMessagesQuery, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to delete session messages: %w", err)
@@ -472,7 +539,7 @@ func (s *ChatService) DeleteSession(ctx context.Context, sessionID string) error
 	}
 
 	// Then, delete the session itself
-	deleteSessionQuery := `DELETE FROM sessions WHERE id = ?`
+	deleteSessionQuery := `DELETE FROM sessions WHERE id = $1`
 	result, err = tx.ExecContext(ctx, deleteSessionQuery, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)

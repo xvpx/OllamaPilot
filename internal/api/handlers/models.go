@@ -22,7 +22,7 @@ type ModelsHandler struct {
 }
 
 // NewModelsHandler creates a new models handler
-func NewModelsHandler(db *database.DB, cfg *config.Config, logger *utils.Logger) *ModelsHandler {
+func NewModelsHandler(db database.Database, cfg *config.Config, logger *utils.Logger) *ModelsHandler {
 	// Create Ollama client
 	ollamaClient := services.NewOllamaClient(cfg.OllamaHost, cfg.OllamaTimeout, logger)
 	

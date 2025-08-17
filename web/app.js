@@ -25,7 +25,6 @@ class ChatApp {
         this.messageInput = document.getElementById('message-input');
         this.sendBtn = document.getElementById('send-btn');
         this.modelSelect = document.getElementById('model-select');
-        this.streamingToggle = document.getElementById('streaming-toggle');
         this.newChatBtn = document.getElementById('new-chat-btn');
         
         // Settings elements
@@ -216,7 +215,7 @@ class ChatApp {
             const response = await fetch(`${this.apiBase}/health`);
             const data = await response.json();
             
-            if (data.status === 'healthy') {
+            if (data.status === 'healthy' || data.status === 'ok') {
                 this.setConnectionStatus('connected', 'Connected');
                 this.isConnected = true;
             } else {
@@ -435,7 +434,7 @@ class ChatApp {
         }
 
         const model = this.modelSelect.value;
-        const streaming = this.streamingToggle.checked;
+        const streaming = true; // Always use streaming
 
         // Clear input and disable send button
         this.messageInput.value = '';
@@ -947,7 +946,6 @@ class ChatApp {
         // Apply default streaming setting
         if (settings.defaultStreaming !== undefined) {
             this.defaultStreamingToggle.checked = settings.defaultStreaming;
-            this.streamingToggle.checked = settings.defaultStreaming;
         }
         
         // Apply auto-scroll setting
