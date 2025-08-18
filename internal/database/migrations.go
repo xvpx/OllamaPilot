@@ -18,11 +18,11 @@ type Migration struct {
 
 // MigrationRunner handles database migrations
 type MigrationRunner struct {
-	db *DB
+	db *PostgresDB
 }
 
 // NewMigrationRunner creates a new migration runner
-func NewMigrationRunner(db *DB) *MigrationRunner {
+func NewMigrationRunner(db *PostgresDB) *MigrationRunner {
 	return &MigrationRunner{db: db}
 }
 
@@ -63,7 +63,7 @@ func (mr *MigrationRunner) createMigrationsTable() error {
 		CREATE TABLE IF NOT EXISTS migrations (
 			version INTEGER PRIMARY KEY,
 			name TEXT NOT NULL,
-			applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			applied_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 		)
 	`
 	_, err := mr.db.Exec(query)
@@ -168,7 +168,7 @@ func (mr *MigrationRunner) applyMigration(migration Migration) error {
 	}
 
 	// Record migration as applied
-	query := "INSERT INTO migrations (version, name) VALUES (?, ?)"
+	query := "INSERT INTO migrations (version, name) VALUES ($1, $2)"
 	if _, err := tx.Exec(query, migration.Version, migration.Name); err != nil {
 		return fmt.Errorf("failed to record migration: %w", err)
 	}
