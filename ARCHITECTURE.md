@@ -5,7 +5,7 @@
 This document outlines the architectural design for the MVP of the modular Dockerized Ollama frontend. The MVP focuses on core chat functionality with real-time streaming, basic memory persistence, and Ollama integration while maintaining simplicity and extensibility.
 
 ### Key Design Decisions
-- **Simple First**: SQLite for persistence, chi router for HTTP handling
+- **Simple First**: PostgreSQL for persistence, chi router for HTTP handling
 - **Streaming Focus**: Server-Sent Events (SSE) for real-time token delivery
 - **Container-Ready**: Docker-first deployment with minimal dependencies
 - **Extensible Foundation**: Clean architecture patterns for future feature additions
@@ -31,7 +31,7 @@ chat_ollama/
 │   ├── config/
 │   │   └── config.go              # Configuration management
 │   ├── database/
-│   │   ├── sqlite.go              # SQLite connection & setup
+│   │   ├── postgres.go           # PostgreSQL connection & setup
 │   │   └── migrations.go          # Migration runner
 │   ├── models/
 │   │   ├── chat.go                # Chat-related models
@@ -179,7 +179,7 @@ All errors follow RFC 7807 Problem Details format:
 
 ## 4. Database Schema
 
-### 4.1 SQLite Schema
+### 4.1 PostgreSQL Schema
 
 ```sql
 -- Sessions table
@@ -250,7 +250,7 @@ graph TB
     subgraph "Docker Network"
         API[API Container<br/>Go Application]
         OLLAMA[Ollama Container<br/>LLM Runtime]
-        VOL[Volume<br/>SQLite + Models]
+        VOL[Volume<br/>PostgreSQL + Models]
     end
     
     CLIENT[Client] --> API
@@ -323,7 +323,7 @@ FROM golang:1.22-alpine AS builder
 WORKDIR /app
 
 # Install build dependencies
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+RUN apk add --no-cache gcc musl-dev
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -332,7 +332,7 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build with CGO enabled for SQLite
+# Build the application
 RUN CGO_ENABLED=1 GOOS=linux go build -a -ldflags '-linkmode external -extldflags "-static"' -o main ./cmd/api
 
 # Final stage
@@ -608,15 +608,15 @@ type ConnectionPool struct {
 }
 
 func NewConnectionPool(dbPath string) (*ConnectionPool, error) {
-    db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_cache_size=1000")
+    db, err := sql.Open("postgres", dsn)
     if err != nil {
         return nil, err
     }
     
-    // Configure connection pool for SQLite
-    db.SetMaxOpenConns(1)  // SQLite works best with single connection
-    db.SetMaxIdleConns(1)
-    db.SetConnMaxLifetime(0) // No limit for SQLite
+    // Configure connection pool for PostgreSQL
+    db.SetMaxOpenConns(25)
+    db.SetMaxIdleConns(5)
+    db.SetConnMaxLifetime(0)
     
     return &ConnectionPool{
         db:          db,
@@ -678,7 +678,7 @@ func (v *Validator) ValidateChatRequest(req *ChatRequest) error {
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
-RUN apk add --no-cache gcc musl-dev sqlite-dev
+RUN apk add --no-cache gcc musl-dev
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -707,13 +707,13 @@ CMD ["./main"]
 ### Phase 1: Core Foundation (Week 1)
 - [ ] Set up project structure with Go modules
 - [ ] Implement basic HTTP server with chi router
-- [ ] Create SQLite database connection and migrations
+- [ ] Create PostgreSQL database connection and migrations
 - [ ] Implement basic health check endpoint
 
 ### Phase 2: Chat Functionality (Week 2)
 - [ ] Implement Ollama client integration
 - [ ] Create chat endpoint with basic request/response
-- [ ] Add message persistence to SQLite
+- [ ] Add message persistence to PostgreSQL
 - [ ] Implement session management
 
 ### Phase 3: Streaming Implementation (Week 3)
@@ -734,7 +734,7 @@ CMD ["./main"]
 - **Latency**: <100ms overhead beyond Ollama response time
 - **Throughput**: Support 100 concurrent streaming connections
 - **Memory**: <512MB RAM usage under normal load
-- **Storage**: Efficient SQLite operations with <10ms query time
+- **Storage**: Efficient PostgreSQL operations with <10ms query time
 
 ### Quality Metrics
 - **Uptime**: 99.9% availability
@@ -763,7 +763,7 @@ CMD ["./main"]
 
 This architecture provides a solid foundation for the Chat Ollama MVP while maintaining simplicity and extensibility. The design prioritizes:
 
-1. **Simplicity**: SQLite for storage, chi for routing, minimal dependencies
+1. **Simplicity**: PostgreSQL for storage, chi for routing, minimal dependencies
 2. **Performance**: Optimized for <100ms latency and 100 concurrent users
 3. **Reliability**: Comprehensive error handling and health monitoring
 4. **Extensibility**: Clean interfaces for future feature additions

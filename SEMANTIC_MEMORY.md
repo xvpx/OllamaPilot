@@ -14,9 +14,7 @@ The semantic memory system enhances the chat application with:
 
 ### Database Migration
 
-The application now supports both SQLite and PostgreSQL:
-- **SQLite**: Legacy support for existing installations
-- **PostgreSQL + pgvector**: Recommended for semantic memory features
+The application uses PostgreSQL with pgvector for semantic memory features.
 
 ### Key Components
 
@@ -142,10 +140,14 @@ DB_PASSWORD=postgres
 DB_SSL_MODE=disable
 ```
 
-For SQLite (legacy):
+PostgreSQL configuration:
 ```bash
-DB_TYPE=sqlite
-DB_PATH=./data/chat.db
+DB_TYPE=postgres
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=ollamapilot
+DB_USER=postgres
+DB_PASSWORD=postgres
 ```
 
 ## Deployment

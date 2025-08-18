@@ -4,9 +4,6 @@
 .env.*.local
 
 # Database files
-*.db
-*.sqlite
-*.sqlite3
 data/
 
 # Logs

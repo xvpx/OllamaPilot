@@ -12,7 +12,7 @@ This guide provides comprehensive instructions for deploying the Chat Ollama MVP
 │   (Port 8081)   │◄──►│  (Port 11435)   │
 │                 │    │                 │
 │ - Go API Server │    │ - LLM Runtime   │
-│ - SQLite DB     │    │ - Model Storage │
+│ - PostgreSQL DB │    │ - Model Storage │
 │ - Health Checks │    │ - Health Checks │
 └─────────────────┘    └─────────────────┘
          │                       │
@@ -102,7 +102,7 @@ The application supports the following environment variables:
 - `ENV=production` - Environment mode
 
 #### Database Configuration
-- `DB_PATH=/data/chat.db` - SQLite database path
+- PostgreSQL database configuration via environment variables
 
 #### Ollama Configuration
 - `OLLAMA_HOST=ollama:11434` - Ollama service endpoint
@@ -126,8 +126,8 @@ Default ports (can be modified in docker-compose.yml):
 
 Two Docker volumes ensure data persistence:
 
-1. **chat_data**: SQLite database storage
-   - Path: `/data` in API container
+1. **postgres_data**: PostgreSQL database storage
+   - Path: `/var/lib/postgresql/data` in PostgreSQL container
    - Contains: `chat.db` and related files
 
 2. **ollama_models**: Model storage
@@ -173,7 +173,7 @@ Expected response:
     "ollama": "healthy"
   },
   "metadata": {
-    "sqlite_version": "3.45.1"
+    "postgres_version": "PostgreSQL 16.x"
   }
 }
 ```
@@ -384,4 +384,4 @@ For issues and questions:
   - API: `golang:1.22-alpine` → `alpine:latest`
   - Ollama: `ollama/ollama:latest`
 - **Architecture**: Multi-stage Docker build
-- **Database**: SQLite 3.45.1+
+- **Database**: PostgreSQL 16.x with pgvector
