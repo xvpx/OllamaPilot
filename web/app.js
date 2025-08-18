@@ -2,9 +2,11 @@ class ChatApp {
     constructor() {
         this.apiBase = window.location.origin;
         this.currentSessionId = null;
+        this.currentProjectId = null;
         this.sessions = [];
         this.models = [];
         this.availableModels = [];
+        this.projects = [];
         this.isConnected = false;
         this.currentTab = 'sessions';
         
@@ -13,6 +15,7 @@ class ChatApp {
         this.checkConnection();
         this.loadSessions();
         this.loadModels();
+        this.loadProjects();
     }
 
     initializeElements() {
@@ -26,6 +29,11 @@ class ChatApp {
         this.sendBtn = document.getElementById('send-btn');
         this.modelSelect = document.getElementById('model-select');
         this.newChatBtn = document.getElementById('new-chat-btn');
+        this.sidebar = document.getElementById('sidebar');
+        this.sidebarToggleBtn = document.getElementById('sidebar-toggle');
+        this.modelSelectorBtn = document.getElementById('model-selector-btn');
+        this.modelDropdown = document.getElementById('model-dropdown');
+        this.currentModelName = document.getElementById('current-model-name');
         
         // Settings elements
         this.settingsBtn = document.getElementById('settings-btn');
@@ -66,6 +74,22 @@ class ChatApp {
         this.availableModelsList = document.getElementById('available-models-list');
         this.modelSearchInput = document.getElementById('model-search-input');
         this.clearSearchBtn = document.getElementById('clear-search-btn');
+        
+        // Delete confirmation modal elements
+        this.deleteModal = document.getElementById('delete-confirmation-modal');
+        this.deleteModalTitle = document.getElementById('delete-modal-title');
+        this.deleteModalMessage = document.getElementById('delete-modal-message');
+        this.deleteModalCancel = document.getElementById('delete-modal-cancel');
+        this.deleteModalConfirm = document.getElementById('delete-modal-confirm');
+        
+        // Project creation modal elements
+        this.projectModal = document.getElementById('project-creation-modal');
+        this.projectModalInput = document.getElementById('project-name-input');
+        this.projectModalCancel = document.getElementById('project-modal-cancel');
+        this.projectModalConfirm = document.getElementById('project-modal-confirm');
+        
+        // Bind the createNewProject method to maintain proper 'this' context
+        this.boundCreateNewProject = this.createNewProject.bind(this);
     }
 
     attachEventListeners() {
@@ -75,6 +99,12 @@ class ChatApp {
         }
         if (this.newChatBtn) {
             this.newChatBtn.addEventListener('click', () => this.createNewSession());
+        }
+        if (this.sidebarToggleBtn) {
+            this.sidebarToggleBtn.addEventListener('click', () => this.toggleSidebar());
+        }
+        if (this.modelSelectorBtn) {
+            this.modelSelectorBtn.addEventListener('click', () => this.toggleModelDropdown());
         }
         
         // Settings modal listeners
@@ -178,6 +208,43 @@ class ChatApp {
             this.clearSearchBtn.addEventListener('click', () => this.clearSearch());
         }
         
+        // Delete confirmation modal listeners
+        if (this.deleteModalCancel) {
+            this.deleteModalCancel.addEventListener('click', () => this.hideDeleteModal());
+        }
+        if (this.deleteModal) {
+            this.deleteModal.addEventListener('click', (e) => {
+                if (e.target === this.deleteModal) {
+                    this.hideDeleteModal();
+                }
+            });
+        }
+        
+        // Project creation modal listeners
+        if (this.projectModalCancel) {
+            this.projectModalCancel.addEventListener('click', () => this.hideProjectModal());
+        }
+        if (this.projectModalConfirm) {
+            this.projectModalConfirm.addEventListener('click', () => this.handleProjectCreation());
+        }
+        if (this.projectModal) {
+            this.projectModal.addEventListener('click', (e) => {
+                if (e.target === this.projectModal) {
+                    this.hideProjectModal();
+                }
+            });
+        }
+        if (this.projectModalInput) {
+            this.projectModalInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    this.handleProjectCreation();
+                } else if (e.key === 'Escape') {
+                    this.hideProjectModal();
+                }
+            });
+        }
+        
         // Message input listeners
         if (this.messageInput) {
             this.messageInput.addEventListener('keydown', (e) => {
@@ -198,6 +265,12 @@ class ChatApp {
         
         // Load settings on startup
         this.loadSettings();
+        
+        // Load sidebar state
+        this.loadSidebarState();
+        
+        // Initialize project menu listeners
+        this.initializeProjectMenus();
     }
 
     adjustTextareaHeight() {
@@ -244,11 +317,23 @@ class ChatApp {
             const data = await response.json();
             
             this.sessions = data.sessions || [];
-            this.renderSessions();
             
-            // If no current session and we have sessions, select the first one
-            if (!this.currentSessionId && this.sessions.length > 0) {
+            // Try to restore the last active session from localStorage first
+            const savedSessionId = this.getSavedSessionId();
+            console.log('Attempting to restore saved session:', savedSessionId);
+            
+            if (savedSessionId && this.sessions.find(s => s.id === savedSessionId)) {
+                console.log('Found saved session in sessions list, selecting it');
+                this.currentSessionId = savedSessionId; // Set directly without triggering save again
+                this.renderSessions();
+                await this.loadMessages(savedSessionId);
+            } else if (!this.currentSessionId && this.sessions.length > 0) {
+                console.log('No saved session found, selecting first session');
+                // If no saved session or saved session doesn't exist, select the first one
                 this.selectSession(this.sessions[0].id);
+            } else {
+                // Just render sessions without selecting any
+                this.renderSessions();
             }
         } catch (error) {
             console.error('Failed to load sessions:', error);
@@ -256,7 +341,163 @@ class ChatApp {
         }
     }
 
+    async updateSessionsList() {
+        try {
+            const response = await fetch(`${this.apiBase}/v1/sessions`);
+            const data = await response.json();
+            
+            this.sessions = data.sessions || [];
+            
+            // Only re-render the sessions list without affecting the current chat
+            this.renderSessions();
+        } catch (error) {
+            console.error('Failed to update sessions list:', error);
+            // Don't show error to user as this is a background update
+        }
+    }
+
+    async loadProjects() {
+        try {
+            const response = await fetch(`${this.apiBase}/v1/projects`);
+            const data = await response.json();
+            
+            this.projects = data.projects || [];
+            this.renderProjects();
+        } catch (error) {
+            console.error('Failed to load projects:', error);
+            // Don't show error to user as projects might not be implemented yet
+            // Fall back to using the hardcoded projects in HTML
+            console.log('Using hardcoded projects from HTML as fallback');
+        }
+    }
+
+    renderProjects() {
+        const projectsList = document.querySelector('.projects-list');
+        if (!projectsList) return;
+        
+        if (this.projects.length === 0) {
+            // Show enhanced empty state message when no projects exist
+            projectsList.innerHTML = `
+                <div class="projects-empty-state">
+                    <div class="empty-state-icon">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            <path d="M12 11v6" stroke-dasharray="2,2" opacity="0.5"></path>
+                            <path d="M9 14h6" stroke-dasharray="2,2" opacity="0.5"></path>
+                        </svg>
+                    </div>
+                    <div class="empty-state-content">
+                        <h3 class="empty-state-title">No projects yet</h3>
+                        <p class="empty-state-description">
+                            Projects help you organize your conversations by topic or purpose.
+                            Create your first project to get started!
+                        </p>
+                        <div class="empty-state-actions">
+                            <button class="empty-state-btn primary" onclick="chatApp.createNewProject()">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 5v14M5 12h14"></path>
+                                </svg>
+                                Create Your First Project
+                            </button>
+                        </div>
+                        <div class="empty-state-tips">
+                            <p class="tip-text">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"></circle>
+                                    <path d="M12 16v-4M12 8h.01"></path>
+                                </svg>
+                                Tip: You can organize chats by work projects, personal topics, or learning subjects
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // Remove any hardcoded projects that have been deleted
+            this.removeDeletedHardcodedProjects();
+            // Re-initialize project menu listeners for remaining hardcoded projects
+            this.initializeProjectMenus();
+            return;
+        }
+
+        projectsList.innerHTML = this.projects.map(project => `
+            <div class="project-item ${project.id === this.currentProjectId ? 'active' : ''}" data-project-id="${project.id}">
+                <div class="project-header">
+                    <button class="project-expand-btn" data-project-id="${project.id}" title="Expand/Collapse">
+                        <svg class="expand-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9,18 15,12 9,6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="project-content" data-project-id="${project.id}">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        <span>${this.escapeHtml(project.name)}</span>
+                    </div>
+                    <button class="project-menu-btn" data-project-id="${project.id}" title="Project options">
+                        <svg viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="12" r="2"></circle>
+                            <circle cx="12" cy="5" r="2"></circle>
+                            <circle cx="12" cy="19" r="2"></circle>
+                        </svg>
+                    </button>
+                    <div class="project-menu" id="project-menu-${project.id}">
+                        <button class="project-menu-item" onclick="chatApp.renameProject('${project.id}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                            </svg>
+                            Rename
+                        </button>
+                        <button class="project-menu-item danger" onclick="chatApp.deleteProject('${project.id}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="3,6 5,6 21,6"></polyline>
+                                <path d="M19,6v14a2,2 0 0,1-2,2H7a2,2 0 0,1-2-2V6m3,0V4a2,2 0 0,1,2-2h4a2,2 0 0,1,2,2v2"></path>
+                            </svg>
+                            Delete
+                        </button>
+                    </div>
+                </div>
+                <div class="project-chats" id="project-chats-${project.id}" style="display: none;">
+                    <!-- Project chats will be loaded here when expanded -->
+                </div>
+            </div>
+        `).join('');
+
+        // Re-initialize project menu listeners after rendering
+        this.initializeProjectMenus();
+    }
+    
+    // Helper method to remove hardcoded projects that have been deleted
+    removeDeletedHardcodedProjects() {
+        const deletedProjects = this.getDeletedHardcodedProjects();
+        deletedProjects.forEach(projectId => {
+            const projectElement = document.querySelector(`[data-project-id="${projectId}"]`);
+            if (projectElement) {
+                projectElement.remove();
+                console.log(`Removed deleted hardcoded project: ${projectId}`);
+            }
+        });
+    }
+    
+    // Get list of deleted hardcoded projects from localStorage
+    getDeletedHardcodedProjects() {
+        const deleted = localStorage.getItem('deletedHardcodedProjects');
+        return deleted ? JSON.parse(deleted) : [];
+    }
+    
+    // Add a project to the deleted hardcoded projects list
+    markHardcodedProjectAsDeleted(projectId) {
+        const deleted = this.getDeletedHardcodedProjects();
+        if (!deleted.includes(projectId)) {
+            deleted.push(projectId);
+            localStorage.setItem('deletedHardcodedProjects', JSON.stringify(deleted));
+            console.log(`Marked hardcoded project as deleted: ${projectId}`);
+        }
+    }
+
     renderSessions() {
+        console.log('renderSessions called with', this.sessions.length, 'sessions');
+        
         if (this.sessions.length === 0) {
             this.sessionsList.innerHTML = '<div style="padding: 1rem; text-align: center; color: #6b7280;">No chat sessions yet</div>';
             return;
@@ -267,44 +508,81 @@ class ChatApp {
                  data-session-id="${session.id}">
                 <div class="session-content">
                     <div class="session-title">${this.escapeHtml(session.title)}</div>
-                    <div class="session-meta">
-                        ${session.message_count} messages • ${this.formatDate(session.updated_at)}
-                    </div>
                 </div>
-                <button class="session-delete-btn" data-session-id="${session.id}" title="Delete session">
+                <button class="session-menu-btn" data-session-id="${session.id}" title="Session options">
                     <svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z" />
+                        <circle cx="12" cy="12" r="2"></circle>
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <circle cx="12" cy="19" r="2"></circle>
                     </svg>
                 </button>
+                <div class="session-menu" id="session-menu-${session.id}">
+                    <button class="session-menu-item" onclick="chatApp.renameSession('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                        Rename
+                    </button>
+                    <button class="session-menu-item" onclick="chatApp.archiveSession('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="21,8 21,21 3,21 3,8"></polyline>
+                            <rect x="1" y="3" width="22" height="5"></rect>
+                            <line x1="10" y1="12" x2="14" y2="12"></line>
+                        </svg>
+                        Archive
+                    </button>
+                    <button class="session-menu-item danger" onclick="chatApp.deleteSession('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3,6 5,6 21,6"></polyline>
+                            <path d="M19,6v14a2,2 0 0,1-2,2H7a2,2 0 0,1-2-2V6m3,0V4a2,2 0 0,1,2-2h4a2,2 0 0,1,2,2v2"></path>
+                        </svg>
+                        Delete
+                    </button>
+                </div>
             </div>
         `).join('');
+        
+        console.log('Sessions HTML rendered, attaching event listeners...');
 
         // Add click listeners to session items
-        this.sessionsList.querySelectorAll('.session-item').forEach(item => {
+        const sessionItems = this.sessionsList.querySelectorAll('.session-item');
+        console.log('Found', sessionItems.length, 'session items to attach listeners to');
+        
+        sessionItems.forEach((item, index) => {
+            console.log(`Attaching listener to session item ${index}:`, item.dataset.sessionId);
             item.addEventListener('click', (e) => {
-                // Don't select session if clicking on delete button
-                if (e.target.closest('.session-delete-btn')) {
+                // Don't select session if clicking on menu button
+                if (e.target.closest('.session-menu-btn')) {
+                    console.log('Clicked on menu button, ignoring');
                     return;
                 }
                 const sessionId = item.dataset.sessionId;
-                this.selectSession(sessionId);
+                console.log('Session clicked:', sessionId, 'Element:', item);
+                if (sessionId) {
+                    this.selectSession(sessionId);
+                } else {
+                    console.error('No session ID found on element:', item);
+                }
             });
         });
 
-        // Add click listeners to delete buttons
-        this.sessionsList.querySelectorAll('.session-delete-btn').forEach(btn => {
+        // Add click listeners to menu buttons
+        this.sessionsList.querySelectorAll('.session-menu-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 const sessionId = btn.dataset.sessionId;
-                console.log('Delete button clicked for session:', sessionId);
-                this.deleteSession(sessionId);
+                this.toggleSessionMenu(sessionId);
             });
         });
     }
 
     async selectSession(sessionId) {
         this.currentSessionId = sessionId;
+        this.currentProjectId = null; // Clear project selection when selecting a session
+        this.saveSessionId(sessionId); // Save to localStorage for persistence
         this.renderSessions(); // Re-render to update active state
+        this.updateProjectHighlighting(); // Clear project highlighting
         await this.loadMessages(sessionId);
     }
 
@@ -342,6 +620,29 @@ class ChatApp {
                         ${message.tokens_used ? ` • ${message.tokens_used} tokens` : ''}
                         ${message.model ? ` • ${message.model}` : ''}
                     </div>
+                    ${message.role === 'assistant' ? `
+                        <div class="message-actions">
+                            <button class="message-action-btn copy-btn" title="Copy" onclick="chatApp.copyMessage('${message.id}')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                            </button>
+                            <button class="message-action-btn tts-btn" title="Read aloud" onclick="chatApp.speakMessage('${message.id}')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                                </svg>
+                            </button>
+                            <button class="message-action-btn regenerate-btn" title="Regenerate" onclick="chatApp.regenerateMessage('${message.id}')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"></polyline>
+                                    <polyline points="1 20 1 14 7 14"></polyline>
+                                    <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
             </div>
         `).join('');
@@ -353,6 +654,8 @@ class ChatApp {
         // Generate a new session ID
         const sessionId = 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
         this.currentSessionId = sessionId;
+        this.currentProjectId = null; // Clear project selection when creating new session
+        this.saveSessionId(sessionId); // Save to localStorage for persistence
         
         // Clear messages and show welcome
         this.chatMessages.innerHTML = `
@@ -363,13 +666,14 @@ class ChatApp {
         
         // Update sessions list to remove active state
         this.renderSessions();
+        this.updateProjectHighlighting(); // Clear project highlighting
         
         // The session will be created automatically when the first message is sent
         this.messageInput.focus();
     }
 
     async deleteSession(sessionId) {
-        console.log('deleteSession called with:', sessionId, '- ACTUAL DELETION');
+        console.log('deleteSession called with:', sessionId, '- SHOWING MODAL');
         
         const session = this.sessions.find(s => s.id === sessionId);
         if (!session) {
@@ -377,51 +681,55 @@ class ChatApp {
             return;
         }
 
-        if (!confirm(`Are you sure you want to delete "${session.title}"?\n\nThis will permanently delete the session and all its messages. This action cannot be undone.`)) {
-            console.log('User cancelled deletion');
-            return;
-        }
+        // Show the styled confirmation modal
+        this.showDeleteModal(
+            'Delete chat?',
+            `This will permanently delete "${session.title}" and all its messages. This action cannot be undone.`,
+            'Delete chat',
+            async () => {
+                console.log('Proceeding with actual session deletion via API');
+                
+                try {
+                    const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
+                        method: 'DELETE'
+                    });
 
-        console.log('Proceeding with actual session deletion via API');
-        
-        try {
-            const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
-                method: 'DELETE'
-            });
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                    }
 
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                    console.log('Session deleted successfully from backend');
+
+                    // Remove from local sessions array
+                    this.sessions = this.sessions.filter(s => s.id !== sessionId);
+                    console.log('Session removed from local array');
+                    
+                    // If this was the current session, clear it
+                    if (this.currentSessionId === sessionId) {
+                        this.currentSessionId = null;
+                        this.clearSavedSessionId(); // Clear from localStorage
+                        this.chatMessages.innerHTML = `
+                            <div class="welcome-section">
+                                <h1 class="welcome-title">What's on the agenda today?</h1>
+                            </div>
+                        `;
+                        console.log('Current session cleared');
+                    }
+
+                    // Re-render sessions list
+                    this.renderSessions();
+                    console.log('Sessions list re-rendered');
+                    
+                    this.showNotification(`Chat "${session.title}" deleted successfully`, 'success');
+                    console.log('Deletion complete');
+                    
+                } catch (error) {
+                    console.error('Failed to delete session:', error);
+                    this.showNotification(`Failed to delete chat: ${error.message}`, 'error');
+                }
             }
-
-            console.log('Session deleted successfully from backend');
-
-            // Remove from local sessions array
-            this.sessions = this.sessions.filter(s => s.id !== sessionId);
-            console.log('Session removed from local array');
-            
-            // If this was the current session, clear it
-            if (this.currentSessionId === sessionId) {
-                this.currentSessionId = null;
-                this.chatMessages.innerHTML = `
-                    <div class="welcome-section">
-                        <h1 class="welcome-title">What's on the agenda today?</h1>
-                    </div>
-                `;
-                console.log('Current session cleared');
-            }
-
-            // Re-render sessions list
-            this.renderSessions();
-            console.log('Sessions list re-rendered');
-            
-            this.showNotification(`Session "${session.title}" deleted successfully`, 'success');
-            console.log('Deletion complete');
-            
-        } catch (error) {
-            console.error('Failed to delete session:', error);
-            this.showNotification(`Failed to delete session: ${error.message}`, 'error');
-        }
+        );
     }
 
     async sendMessage() {
@@ -462,8 +770,9 @@ class ChatApp {
                 typingIndicator.parentNode.removeChild(typingIndicator);
             }
             
-            // Reload sessions to update the list
-            this.loadSessions();
+            // Only update the sessions list without reloading messages
+            // This prevents clearing the chat messages we just added
+            this.updateSessionsList();
         }
     }
 
@@ -584,6 +893,29 @@ class ChatApp {
             <div class="message-content">
                 <div class="message-text">${this.escapeHtml(content)}</div>
                 <div class="message-meta">${metaText}</div>
+                ${role === 'assistant' ? `
+                    <div class="message-actions">
+                        <button class="message-action-btn copy-btn" title="Copy" onclick="chatApp.copyMessage('${Date.now()}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </button>
+                        <button class="message-action-btn tts-btn" title="Read aloud" onclick="chatApp.speakMessage('${Date.now()}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            </svg>
+                        </button>
+                        <button class="message-action-btn regenerate-btn" title="Regenerate" onclick="chatApp.regenerateMessage('${Date.now()}')">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"></path>
+                            </svg>
+                        </button>
+                    </div>
+                ` : ''}
             </div>
         `;
 
@@ -764,14 +1096,165 @@ class ChatApp {
         const currentValue = this.modelSelect.value;
         const availableModels = this.models.filter(m => m.status === 'available' && m.is_enabled);
         
+        // Update legacy select for compatibility
         this.modelSelect.innerHTML = availableModels.map(model =>
             `<option value="${model.name}" ${model.is_default ? 'selected' : ''}>${model.display_name}</option>`
         ).join('');
+        
+        // Update new model dropdown
+        this.updateModelDropdown(availableModels);
         
         // Restore previous selection if still available
         if (currentValue && availableModels.some(m => m.name === currentValue)) {
             this.modelSelect.value = currentValue;
         }
+    }
+
+    updateModelDropdown(models) {
+        if (!this.modelDropdown) return;
+        
+        const dropdownContent = this.modelDropdown.querySelector('.model-dropdown-content');
+        if (!dropdownContent) return;
+        
+        dropdownContent.innerHTML = models.map(model => `
+            <div class="model-option ${model.is_default ? 'active' : ''}" data-model="${model.name}">
+                <div class="model-option-info">
+                    <div class="model-option-name">${model.display_name}</div>
+                    <div class="model-option-description">${this.getModelDescription(model)}</div>
+                </div>
+            </div>
+        `).join('');
+        
+        // Add click listeners to model options
+        dropdownContent.querySelectorAll('.model-option').forEach(option => {
+            option.addEventListener('click', (e) => {
+                const modelName = option.dataset.model;
+                this.selectModel(modelName);
+            });
+        });
+        
+        // Update current model name display
+        const defaultModel = models.find(m => m.is_default);
+        if (defaultModel && this.currentModelName) {
+            this.currentModelName.textContent = defaultModel.display_name;
+        } else if (models.length > 0 && this.currentModelName) {
+            // Fallback to first available model if no default is set
+            this.currentModelName.textContent = models[0].display_name;
+        } else if (this.currentModelName) {
+            // Show a fallback if no models are available
+            this.currentModelName.textContent = 'No models available';
+        }
+    }
+
+    getModelDescription(model) {
+        // Provide descriptions based on model names
+        const descriptions = {
+            // Llama models
+            'llama3.2:1b': 'Compact Llama model, fast and efficient',
+            'llama3.2:3b': 'Balanced Llama model, good performance',
+            'llama3.1:8b': 'Large Llama model, high quality responses',
+            'llama3.1:70b': 'Massive Llama model, best quality',
+            'llama3:8b': 'Standard Llama 3 model',
+            'llama3:70b': 'Large Llama 3 model',
+            'llama2:7b': 'Llama 2 base model',
+            'llama2:13b': 'Medium Llama 2 model',
+            'llama2:70b': 'Large Llama 2 model',
+            
+            // Code models
+            'codellama:7b': 'Code-focused Llama model',
+            'codellama:13b': 'Larger code generation model',
+            'codellama:34b': 'Large code generation model',
+            
+            // Mistral models
+            'mistral:7b': 'Efficient 7B parameter model',
+            'mistral:latest': 'Latest Mistral model version',
+            'mixtral:8x7b': 'Mixture of experts model',
+            
+            // Other popular models
+            'phi3:mini': 'Compact Microsoft Phi model',
+            'phi3:medium': 'Balanced Microsoft Phi model',
+            'gemma:2b': 'Small Google Gemma model',
+            'gemma:7b': 'Standard Google Gemma model',
+            'qwen2:1.5b': 'Small Qwen model',
+            'qwen2:7b': 'Standard Qwen model',
+            
+            // Legacy fallbacks
+            'gpt-5': 'Advanced language model',
+            'gpt-4': 'Advanced language model',
+            'gpt-4-turbo': 'Advanced language model',
+            'gpt-3.5-turbo': 'Advanced language model'
+        };
+        
+        return descriptions[model.name] || model.description || 'Advanced language model';
+    }
+
+    toggleModelDropdown() {
+        if (!this.modelDropdown || !this.modelSelectorBtn) return;
+        
+        const isOpen = this.modelDropdown.classList.contains('active');
+        
+        if (isOpen) {
+            this.closeModelDropdown();
+        } else {
+            this.openModelDropdown();
+        }
+    }
+
+    openModelDropdown() {
+        if (!this.modelDropdown || !this.modelSelectorBtn) return;
+        
+        // Close any other open dropdowns
+        document.querySelectorAll('.model-dropdown.active').forEach(dropdown => {
+            if (dropdown !== this.modelDropdown) {
+                dropdown.classList.remove('active');
+            }
+        });
+        
+        this.modelDropdown.classList.add('active');
+        this.modelSelectorBtn.setAttribute('aria-expanded', 'true');
+        
+        // Close dropdown when clicking outside
+        setTimeout(() => {
+            const closeHandler = (e) => {
+                if (!e.target.closest('.model-selector')) {
+                    this.closeModelDropdown();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            document.addEventListener('click', closeHandler);
+        }, 0);
+    }
+
+    closeModelDropdown() {
+        if (!this.modelDropdown || !this.modelSelectorBtn) return;
+        
+        this.modelDropdown.classList.remove('active');
+        this.modelSelectorBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    selectModel(modelName) {
+        // Update the legacy select
+        if (this.modelSelect) {
+            this.modelSelect.value = modelName;
+        }
+        
+        // Update the dropdown display
+        const selectedModel = this.models.find(m => m.name === modelName);
+        if (selectedModel && this.currentModelName) {
+            this.currentModelName.textContent = selectedModel.display_name;
+        }
+        
+        // Update active state in dropdown
+        const modelOptions = this.modelDropdown.querySelectorAll('.model-option');
+        modelOptions.forEach(option => {
+            option.classList.toggle('active', option.dataset.model === modelName);
+        });
+        
+        // Close dropdown
+        this.closeModelDropdown();
+        
+        // Show notification
+        this.showNotification(`Switched to ${selectedModel?.display_name || modelName}`, 'success');
     }
 
     async syncModels() {
@@ -1043,6 +1526,7 @@ class ChatApp {
             if (response.ok) {
                 this.sessions = [];
                 this.currentSessionId = null;
+                this.clearSavedSessionId(); // Clear from localStorage
                 this.renderSessions();
                 this.chatMessages.innerHTML = `
                     <div class="welcome-section">
@@ -2166,6 +2650,872 @@ class ChatApp {
             this.showSyncStatus(`Failed to force remove model: ${error.message}`, 'error');
             this.showNotification(`Failed to force remove model: ${error.message}`, 'error');
         }
+    }
+
+    // Session menu methods
+    toggleSessionMenu(sessionId) {
+        // Close all other session menus
+        document.querySelectorAll('.session-menu').forEach(menu => {
+            if (menu.id !== `session-menu-${sessionId}`) {
+                menu.classList.remove('active');
+            }
+        });
+        
+        // Toggle the clicked menu
+        const menu = document.getElementById(`session-menu-${sessionId}`);
+        if (menu) {
+            menu.classList.toggle('active');
+            
+            // Close menu when clicking outside
+            if (menu.classList.contains('active')) {
+                const closeHandler = (e) => {
+                    if (!e.target.closest('.session-menu-btn') && !e.target.closest('.session-menu')) {
+                        menu.classList.remove('active');
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                setTimeout(() => document.addEventListener('click', closeHandler), 0);
+            }
+        }
+    }
+
+    async renameSession(sessionId) {
+        const session = this.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        
+        const newTitle = prompt('Enter new session name:', session.title);
+        if (!newTitle || newTitle === session.title) return;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    title: newTitle
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            // Update local session
+            session.title = newTitle;
+            this.renderSessions();
+            this.showNotification('Session renamed successfully', 'success');
+        } catch (error) {
+            console.error('Failed to rename session:', error);
+            this.showNotification('Failed to rename session', 'error');
+        }
+    }
+
+    async archiveSession(sessionId) {
+        const session = this.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        
+        if (!confirm(`Archive "${session.title}"?`)) return;
+        
+        try {
+            const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}/archive`, {
+                method: 'POST'
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            // Remove from local sessions
+            this.sessions = this.sessions.filter(s => s.id !== sessionId);
+            
+            // If this was the current session, clear it
+            if (this.currentSessionId === sessionId) {
+                this.currentSessionId = null;
+                this.clearSavedSessionId(); // Clear from localStorage
+                this.chatMessages.innerHTML = `
+                    <div class="welcome-section">
+                        <h1 class="welcome-title">What's on the agenda today?</h1>
+                    </div>
+                `;
+            }
+            
+            this.renderSessions();
+            this.showNotification('Session archived', 'success');
+        } catch (error) {
+            console.error('Failed to archive session:', error);
+            this.showNotification('Failed to archive session', 'error');
+        }
+    }
+
+    // Project menu methods
+    toggleProjectMenu(projectId) {
+        // Close all other project menus
+        document.querySelectorAll('.project-menu').forEach(menu => {
+            if (menu.id !== `project-menu-${projectId}`) {
+                menu.classList.remove('active');
+            }
+        });
+        
+        // Toggle the clicked menu
+        const menu = document.getElementById(`project-menu-${projectId}`);
+        if (menu) {
+            menu.classList.toggle('active');
+            
+            // Close menu when clicking outside
+            if (menu.classList.contains('active')) {
+                const closeHandler = (e) => {
+                    if (!e.target.closest('.project-menu-btn') && !e.target.closest('.project-menu')) {
+                        menu.classList.remove('active');
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                setTimeout(() => document.addEventListener('click', closeHandler), 0);
+            }
+        }
+    }
+
+    async renameProject(projectId) {
+        const projectElement = document.querySelector(`[data-project-id="${projectId}"] .project-content span`);
+        if (!projectElement) return;
+        
+        const currentName = projectElement.textContent;
+        const newName = prompt('Enter new project name:', currentName);
+        if (!newName || newName === currentName) return;
+        
+        try {
+            // Make API call to rename the project
+            const response = await fetch(`${this.apiBase}/v1/projects/${projectId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: newName
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            // Update local projects array
+            const project = this.projects.find(p => p.id === projectId);
+            if (project) {
+                project.name = newName;
+            }
+
+            // Update local UI
+            projectElement.textContent = newName;
+            this.showNotification(`Project renamed to "${newName}"`, 'success');
+            
+            // Close the menu
+            const menu = document.getElementById(`project-menu-${projectId}`);
+            if (menu) {
+                menu.classList.remove('active');
+            }
+        } catch (error) {
+            console.error('Failed to rename project:', error);
+            this.showNotification(`Failed to rename project: ${error.message}`, 'error');
+        }
+    }
+
+    async deleteProject(projectId) {
+        const projectElement = document.querySelector(`[data-project-id="${projectId}"] .project-content span`);
+        if (!projectElement) return;
+        
+        const projectName = projectElement.textContent;
+        
+        // Check if this is a real project from the backend or a hardcoded one
+        const project = this.projects.find(p => p.id === projectId);
+        const isHardcodedProject = !project;
+        
+        // Show the styled confirmation modal
+        this.showDeleteModal(
+            'Delete project?',
+            `This will permanently delete all project files and chats. To save chats, move them to your chat list or another project before deleting.`,
+            'Delete project',
+            async () => {
+                console.log('Proceeding with project deletion');
+                
+                try {
+                    if (isHardcodedProject) {
+                        console.log('Deleting hardcoded project - removing from DOM only');
+                        
+                        // Mark as deleted in localStorage so it doesn't reappear on refresh
+                        this.markHardcodedProjectAsDeleted(projectId);
+                        
+                        // Remove from local UI immediately
+                        const projectItem = document.querySelector(`[data-project-id="${projectId}"]`);
+                        if (projectItem) {
+                            projectItem.remove();
+                            console.log('Hardcoded project removed from local UI');
+                        }
+                        
+                        this.showNotification(`Project "${projectName}" deleted successfully`, 'success');
+                        console.log('Hardcoded project deletion complete');
+                        
+                    } else {
+                        console.log('Deleting real project via API');
+                        
+                        // Make API call to delete the project
+                        const response = await fetch(`${this.apiBase}/v1/projects/${projectId}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                        }
+
+                        console.log('Project deleted successfully from backend');
+
+                        // Remove from local projects array
+                        this.projects = this.projects.filter(p => p.id !== projectId);
+                        console.log('Project removed from local array');
+
+                        // Remove from local UI
+                        const projectItem = document.querySelector(`[data-project-id="${projectId}"]`);
+                        if (projectItem) {
+                            projectItem.remove();
+                            console.log('Project removed from local UI');
+                        }
+                        
+                        this.showNotification(`Project "${projectName}" deleted successfully`, 'success');
+                        console.log('API project deletion complete');
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to delete project:', error);
+                    this.showNotification(`Failed to delete project: ${error.message}`, 'error');
+                }
+            }
+        );
+    }
+
+    // Initialize project menu event listeners
+    initializeProjectMenus() {
+        // Add click listeners to project menu buttons
+        document.querySelectorAll('.project-menu-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const projectId = btn.dataset.projectId;
+                this.toggleProjectMenu(projectId);
+            });
+        });
+
+        // Add click listeners to project expand buttons
+        document.querySelectorAll('.project-expand-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const projectId = btn.dataset.projectId;
+                this.toggleProjectExpansion(projectId);
+            });
+        });
+
+        // Add click listeners to project content (project name area)
+        document.querySelectorAll('.project-content').forEach(content => {
+            content.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const projectId = content.dataset.projectId;
+                this.selectProject(projectId);
+            });
+        });
+
+        // Initialize project chat listeners for existing chats
+        document.querySelectorAll('.project-chats').forEach(projectChats => {
+            this.initializeProjectChatListeners(projectChats);
+        });
+
+        // Add click listener to the "Add Project" button
+        const addProjectBtn = document.querySelector('.projects-add-btn');
+        if (addProjectBtn) {
+            // Remove any existing listeners to avoid duplicates
+            addProjectBtn.removeEventListener('click', this.boundCreateNewProject);
+            addProjectBtn.addEventListener('click', this.boundCreateNewProject);
+        }
+    }
+
+    async createNewProject() {
+        this.showProjectModal();
+    }
+
+    showProjectModal() {
+        if (!this.projectModal) return;
+        
+        // Clear previous input
+        if (this.projectModalInput) {
+            this.projectModalInput.value = '';
+        }
+        
+        // Show modal
+        this.projectModal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Focus on input
+        if (this.projectModalInput) {
+            setTimeout(() => this.projectModalInput.focus(), 100);
+        }
+    }
+
+    hideProjectModal() {
+        if (!this.projectModal) return;
+        
+        this.projectModal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    async handleProjectCreation() {
+        const projectName = this.projectModalInput?.value?.trim();
+        if (!projectName) return;
+
+        try {
+            const response = await fetch(`${this.apiBase}/v1/projects`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    name: projectName
+                })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const newProject = await response.json();
+            
+            // Add to local projects array
+            this.projects.push(newProject);
+            
+            // Re-render projects
+            this.renderProjects();
+            
+            // Hide modal
+            this.hideProjectModal();
+            
+            this.showNotification(`Project "${projectName}" created successfully`, 'success');
+        } catch (error) {
+            console.error('Failed to create project:', error);
+            this.showNotification(`Failed to create project: ${error.message}`, 'error');
+        }
+    }
+
+    // Project selection methods
+    selectProject(projectId) {
+        this.currentProjectId = projectId;
+        this.currentSessionId = null; // Clear session selection when selecting a project
+        this.updateProjectHighlighting();
+        this.updateSessionHighlighting(); // Clear session highlighting
+        
+        // Clear chat messages when switching to project
+        this.chatMessages.innerHTML = `
+            <div class="welcome-section">
+                <h1 class="welcome-title">What's on the agenda today?</h1>
+            </div>
+        `;
+        
+        const projectName = document.querySelector(`[data-project-id="${projectId}"] .project-content span`)?.textContent;
+        if (projectName) {
+            this.showNotification(`Switched to project: ${projectName}`, 'info');
+        }
+    }
+
+    updateProjectHighlighting() {
+        // Remove active class from all projects
+        document.querySelectorAll('.project-item').forEach(p => p.classList.remove('active'));
+        
+        // Add active class to current project if one is selected
+        if (this.currentProjectId) {
+            const currentProject = document.querySelector(`[data-project-id="${this.currentProjectId}"]`);
+            if (currentProject) {
+                currentProject.classList.add('active');
+            }
+        }
+    }
+
+    updateSessionHighlighting() {
+        // Re-render sessions to update highlighting based on currentSessionId
+        this.renderSessions();
+    }
+
+    // Message action methods
+    async copyMessage(messageId) {
+        const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (!messageElement) {
+            // Fallback: find message by content
+            const messages = document.querySelectorAll('.message-text');
+            for (let msg of messages) {
+                if (msg.textContent) {
+                    try {
+                        await navigator.clipboard.writeText(msg.textContent);
+                        this.showNotification('Message copied to clipboard', 'success');
+                        return;
+                    } catch (error) {
+                        console.error('Failed to copy message:', error);
+                    }
+                }
+            }
+            return;
+        }
+        
+        const messageText = messageElement.querySelector('.message-text')?.textContent;
+        if (messageText) {
+            try {
+                await navigator.clipboard.writeText(messageText);
+                this.showNotification('Message copied to clipboard', 'success');
+            } catch (error) {
+                console.error('Failed to copy message:', error);
+                this.showNotification('Failed to copy message', 'error');
+            }
+        }
+    }
+
+    speakMessage(messageId) {
+        const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
+        let messageText = '';
+        
+        if (!messageElement) {
+            // Fallback: find the last assistant message
+            const assistantMessages = document.querySelectorAll('.message.assistant .message-text');
+            if (assistantMessages.length > 0) {
+                messageText = assistantMessages[assistantMessages.length - 1].textContent;
+            }
+        } else {
+            messageText = messageElement.querySelector('.message-text')?.textContent;
+        }
+        
+        if (messageText && 'speechSynthesis' in window) {
+            // Stop any ongoing speech
+            speechSynthesis.cancel();
+            
+            const utterance = new SpeechSynthesisUtterance(messageText);
+            utterance.rate = 0.9;
+            utterance.pitch = 1;
+            utterance.volume = 0.8;
+            
+            speechSynthesis.speak(utterance);
+            this.showNotification('Reading message aloud', 'info');
+        } else {
+            this.showNotification('Text-to-speech not supported', 'error');
+        }
+    }
+
+    async regenerateMessage(messageId) {
+        // For now, just show a notification
+        // In a full implementation, this would resend the last user message
+        this.showNotification('Regenerate feature coming soon', 'info');
+    }
+
+    // Sidebar toggle functionality
+    toggleSidebar() {
+        if (this.sidebar) {
+            this.sidebar.classList.toggle('collapsed');
+            
+            // Save sidebar state to localStorage
+            const isCollapsed = this.sidebar.classList.contains('collapsed');
+            localStorage.setItem('sidebarCollapsed', isCollapsed.toString());
+            
+            // Update toggle button icon
+            this.updateSidebarToggleIcon(isCollapsed);
+        }
+    }
+
+    updateSidebarToggleIcon(isCollapsed) {
+        if (this.sidebarToggleBtn) {
+            const svg = this.sidebarToggleBtn.querySelector('svg');
+            if (svg) {
+                if (isCollapsed) {
+                    // Show expand icon (arrow right)
+                    svg.innerHTML = '<path d="M9 18l6-6-6-6"></path>';
+                } else {
+                    // Show collapse icon (hamburger menu)
+                    svg.innerHTML = '<path d="M3 12h18M3 6h18M3 18h18"></path>';
+                }
+            }
+        }
+    }
+
+    // Load sidebar state from localStorage
+    loadSidebarState() {
+        const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+        if (isCollapsed && this.sidebar) {
+            this.sidebar.classList.add('collapsed');
+            this.updateSidebarToggleIcon(true);
+        }
+    }
+
+    // Session persistence methods
+    saveSessionId(sessionId) {
+        try {
+            localStorage.setItem('currentSessionId', sessionId);
+            console.log('Session ID saved to localStorage:', sessionId);
+        } catch (error) {
+            console.warn('Failed to save session ID to localStorage:', error);
+        }
+    }
+
+    getSavedSessionId() {
+        try {
+            const sessionId = localStorage.getItem('currentSessionId');
+            console.log('Retrieved session ID from localStorage:', sessionId);
+            return sessionId;
+        } catch (error) {
+            console.warn('Failed to retrieve session ID from localStorage:', error);
+            return null;
+        }
+    }
+
+    clearSavedSessionId() {
+        try {
+            localStorage.removeItem('currentSessionId');
+            console.log('Session ID cleared from localStorage');
+        } catch (error) {
+            console.warn('Failed to clear session ID from localStorage:', error);
+        }
+    }
+
+    // Delete confirmation modal methods
+    showDeleteModal(title, message, confirmButtonText, onConfirm) {
+        if (!this.deleteModal) return;
+        
+        // Set modal content
+        if (this.deleteModalTitle) {
+            this.deleteModalTitle.textContent = title;
+        }
+        if (this.deleteModalMessage) {
+            this.deleteModalMessage.textContent = message;
+        }
+        if (this.deleteModalConfirm) {
+            this.deleteModalConfirm.textContent = confirmButtonText;
+        }
+        
+        // Remove any existing event listeners
+        if (this.deleteModalConfirm) {
+            const newConfirmBtn = this.deleteModalConfirm.cloneNode(true);
+            this.deleteModalConfirm.parentNode.replaceChild(newConfirmBtn, this.deleteModalConfirm);
+            this.deleteModalConfirm = newConfirmBtn;
+            
+            // Add new event listener
+            this.deleteModalConfirm.addEventListener('click', () => {
+                this.hideDeleteModal();
+                if (onConfirm) {
+                    onConfirm();
+                }
+            });
+        }
+        
+        // Show modal
+        this.deleteModal.classList.add('active');
+        document.body.style.overflow = 'hidden';
+        
+        // Focus on cancel button for accessibility
+        if (this.deleteModalCancel) {
+            setTimeout(() => this.deleteModalCancel.focus(), 100);
+        }
+    }
+    
+    hideDeleteModal() {
+        if (!this.deleteModal) return;
+        
+        this.deleteModal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    // Project expansion functionality
+    toggleProjectExpansion(projectId) {
+        const projectItem = document.querySelector(`[data-project-id="${projectId}"]`);
+        const projectChats = document.getElementById(`project-chats-${projectId}`);
+        
+        if (!projectItem || !projectChats) return;
+        
+        const isExpanded = projectItem.classList.contains('expanded');
+        
+        if (isExpanded) {
+            // Collapse
+            projectItem.classList.remove('expanded');
+            projectChats.style.display = 'none';
+            projectChats.classList.remove('expanded');
+        } else {
+            // Expand
+            projectItem.classList.add('expanded');
+            projectChats.style.display = 'block';
+            projectChats.classList.add('expanded');
+            
+            // Load project chats if not already loaded
+            this.loadProjectChats(projectId);
+        }
+    }
+
+    // Load chats for a specific project
+    async loadProjectChats(projectId) {
+        try {
+            const response = await fetch(`${this.apiBase}/v1/projects/${projectId}/sessions`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            this.renderProjectChats(projectId, data.sessions || []);
+        } catch (error) {
+            console.error('Failed to load project chats:', error);
+            // For now, keep the hardcoded chats as fallback
+        }
+    }
+
+    // Render chats for a specific project
+    renderProjectChats(projectId, sessions) {
+        const projectChats = document.getElementById(`project-chats-${projectId}`);
+        if (!projectChats) return;
+        
+        if (sessions.length === 0) {
+            projectChats.innerHTML = '<div class="project-chat-empty">No chats in this project</div>';
+            return;
+        }
+        
+        projectChats.innerHTML = sessions.map(session => `
+            <div class="project-chat-item" data-session-id="${session.id}">
+                <div class="project-chat-content">
+                    <div class="project-chat-title">${this.escapeHtml(session.title)}</div>
+                </div>
+                <button class="project-chat-menu-btn" data-session-id="${session.id}" title="Chat options">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="12" r="2"></circle>
+                        <circle cx="12" cy="5" r="2"></circle>
+                        <circle cx="12" cy="19" r="2"></circle>
+                    </svg>
+                </button>
+                <div class="project-chat-menu" id="project-chat-menu-${session.id}">
+                    <button class="project-chat-menu-item" onclick="chatApp.renameProjectChat('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                        Rename
+                    </button>
+                    <button class="project-chat-menu-item" onclick="chatApp.archiveProjectChat('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="21,8 21,21 3,21 3,8"></polyline>
+                            <rect x="1" y="3" width="22" height="5"></rect>
+                            <line x1="10" y1="12" x2="14" y2="12"></line>
+                        </svg>
+                        Archive
+                    </button>
+                    <button class="project-chat-menu-item danger" onclick="chatApp.deleteProjectChat('${session.id}')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3,6 5,6 21,6"></polyline>
+                            <path d="M19,6v14a2,2 0 0,1-2,2H7a2,2 0 0,1-2-2V6m3,0V4a2,2 0 0,1,2-2h4a2,2 0 0,1,2,2v2"></path>
+                        </svg>
+                        Delete
+                    </button>
+                </div>
+            </div>
+        `).join('');
+        
+        // Re-attach event listeners for the new chat items
+        this.initializeProjectChatListeners(projectChats);
+    }
+
+    // Initialize event listeners for project chat items
+    initializeProjectChatListeners(projectChats) {
+        // Add click listeners to project chat content
+        projectChats.querySelectorAll('.project-chat-content').forEach(content => {
+            content.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const chatItem = content.closest('.project-chat-item');
+                const sessionId = chatItem.dataset.sessionId;
+                this.selectProjectChat(sessionId);
+            });
+        });
+
+        // Add click listeners to project chat menu buttons
+        projectChats.querySelectorAll('.project-chat-menu-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const sessionId = btn.dataset.sessionId;
+                this.toggleProjectChatMenu(sessionId);
+            });
+        });
+    }
+
+    // Toggle project chat menu
+    toggleProjectChatMenu(sessionId) {
+        // Close all other project chat menus
+        document.querySelectorAll('.project-chat-menu').forEach(menu => {
+            if (menu.id !== `project-chat-menu-${sessionId}`) {
+                menu.classList.remove('active');
+            }
+        });
+        
+        // Toggle the clicked menu
+        const menu = document.getElementById(`project-chat-menu-${sessionId}`);
+        if (menu) {
+            menu.classList.toggle('active');
+            
+            // Close menu when clicking outside
+            if (menu.classList.contains('active')) {
+                const closeHandler = (e) => {
+                    if (!e.target.closest('.project-chat-menu-btn') && !e.target.closest('.project-chat-menu')) {
+                        menu.classList.remove('active');
+                        document.removeEventListener('click', closeHandler);
+                    }
+                };
+                setTimeout(() => document.addEventListener('click', closeHandler), 0);
+            }
+        }
+    }
+
+    // Project chat menu actions
+    async renameProjectChat(sessionId) {
+        // Use the same logic as regular session rename
+        await this.renameSession(sessionId);
+    }
+
+    async archiveProjectChat(sessionId) {
+        // Use the same logic as regular session archive
+        await this.archiveSession(sessionId);
+    }
+
+    async deleteProjectChat(sessionId) {
+        console.log('deleteProjectChat called with:', sessionId, '- SHOWING MODAL');
+        
+        // Try to find the session in the loaded sessions array
+        let session = this.sessions.find(s => s.id === sessionId);
+        let isHardcodedSession = false;
+        
+        // If not found in sessions array, try to get the title from the DOM element
+        let sessionTitle = 'Unknown Chat';
+        if (!session) {
+            console.log('Session not found in sessions array, checking DOM for title');
+            const chatElement = document.querySelector(`[data-session-id="${sessionId}"] .project-chat-title`);
+            if (chatElement) {
+                sessionTitle = chatElement.textContent;
+                console.log('Found session title in DOM:', sessionTitle);
+                // This is a hardcoded session that doesn't exist in the backend
+                isHardcodedSession = true;
+                // Create a temporary session object for the modal
+                session = { id: sessionId, title: sessionTitle };
+            } else {
+                console.log('Session not found in DOM either, using fallback');
+                session = { id: sessionId, title: sessionTitle };
+                isHardcodedSession = true;
+            }
+        } else {
+            sessionTitle = session.title;
+        }
+
+        // Show the styled confirmation modal (same as regular chat delete)
+        this.showDeleteModal(
+            'Delete chat?',
+            `This will permanently delete "${sessionTitle}" and all its messages. This action cannot be undone.`,
+            'Delete chat',
+            async () => {
+                console.log('Proceeding with project chat deletion');
+                
+                try {
+                    // If this is a hardcoded session, just remove it from DOM
+                    if (isHardcodedSession) {
+                        console.log('Deleting hardcoded session - removing from DOM only');
+                        
+                        // Remove the chat item from the DOM immediately
+                        const chatElement = document.querySelector(`[data-session-id="${sessionId}"]`);
+                        if (chatElement) {
+                            chatElement.remove();
+                            console.log('Hardcoded chat element removed from DOM');
+                        }
+                        
+                        // If this was the current session, clear it
+                        if (this.currentSessionId === sessionId) {
+                            this.currentSessionId = null;
+                            this.clearSavedSessionId(); // Clear from localStorage
+                            this.chatMessages.innerHTML = `
+                                <div class="welcome-section">
+                                    <h1 class="welcome-title">What's on the agenda today?</h1>
+                                </div>
+                            `;
+                            console.log('Current session cleared');
+                        }
+                        
+                        this.showNotification(`Chat "${sessionTitle}" deleted successfully`, 'success');
+                        console.log('Hardcoded project chat deletion complete');
+                        
+                    } else {
+                        // This is a real session from the backend, delete via API
+                        console.log('Deleting real session via API');
+                        
+                        const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
+                            method: 'DELETE'
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json();
+                            throw new Error(errorData.detail || `HTTP ${response.status}: ${response.statusText}`);
+                        }
+
+                        console.log('Project chat deleted successfully from backend');
+
+                        // Remove from local sessions array
+                        this.sessions = this.sessions.filter(s => s.id !== sessionId);
+                        console.log('Project chat removed from local array');
+                        
+                        // If this was the current session, clear it
+                        if (this.currentSessionId === sessionId) {
+                            this.currentSessionId = null;
+                            this.chatMessages.innerHTML = `
+                                <div class="welcome-section">
+                                    <h1 class="welcome-title">What's on the agenda today?</h1>
+                                </div>
+                            `;
+                            console.log('Current session cleared');
+                        }
+
+                        // Re-render sessions list
+                        this.renderSessions();
+                        console.log('Sessions list re-rendered');
+                        
+                        // Reload project chats for all expanded projects
+                        document.querySelectorAll('.project-item.expanded').forEach(projectItem => {
+                            const projectId = projectItem.dataset.projectId;
+                            if (projectId) {
+                                this.loadProjectChats(projectId);
+                            }
+                        });
+                        
+                        this.showNotification(`Chat "${sessionTitle}" deleted successfully`, 'success');
+                        console.log('API project chat deletion complete');
+                    }
+                    
+                } catch (error) {
+                    console.error('Failed to delete project chat:', error);
+                    this.showNotification(`Failed to delete chat: ${error.message}`, 'error');
+                }
+            }
+        );
+    }
+
+    // Select a chat from within a project
+    async selectProjectChat(sessionId) {
+        // Clear any active project chat items
+        document.querySelectorAll('.project-chat-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        
+        // Set the clicked chat as active
+        const chatItem = document.querySelector(`[data-session-id="${sessionId}"]`);
+        if (chatItem) {
+            chatItem.classList.add('active');
+        }
+        
+        // Load the session like a regular session
+        this.currentSessionId = sessionId;
+        this.currentProjectId = null; // Clear project selection when selecting a chat
+        this.renderSessions(); // Re-render to update active state
+        await this.loadMessages(sessionId);
+        
+        this.showNotification(`Opened chat: ${chatItem?.textContent || 'Unknown'}`, 'info');
     }
 }
 

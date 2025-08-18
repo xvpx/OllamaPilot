@@ -94,6 +94,17 @@ func (rt *Router) SetupRoutes() http.Handler {
 		r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
 		r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
 		
+		// Project handlers
+		projectHandler := handlers.NewProjectHandler(rt.db, rt.cfg, rt.logger)
+		
+		// Project endpoints
+		r.Get("/projects", projectHandler.GetProjects)
+		r.Post("/projects", projectHandler.CreateProject)
+		r.Get("/projects/{projectID}", projectHandler.GetProject)
+		r.Put("/projects/{projectID}", projectHandler.UpdateProject)
+		r.Delete("/projects/{projectID}", projectHandler.DeleteProject)
+		r.Get("/projects/{projectID}/sessions", projectHandler.GetProjectSessions)
+		
 		// Model management handlers - works with both SQLite and PostgreSQL
 		modelsHandler := handlers.NewModelsHandler(rt.db, rt.cfg, rt.logger)
 		

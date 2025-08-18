@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"chat_ollama/internal/config"
@@ -116,6 +117,13 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 	if err := s.SaveMessage(ctx, userMessage); err != nil {
 		return nil, fmt.Errorf("failed to save user message: %w", err)
 	}
+
+	// Update session title if this is the first user message
+	go func() {
+		if err := s.updateSessionTitleFromFirstMessage(context.Background(), req.SessionID, req.Message); err != nil {
+			s.logger.Error().Err(err).Str("session_id", req.SessionID).Msg("Failed to update session title")
+		}
+	}()
 
 	// Send to Ollama with semantic context
 	ollamaResp, err := s.ollamaClient.ChatWithContext(ctx, req, messages, relevantContext)
@@ -242,6 +250,13 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 		return err
 	}
 
+	// Update session title if this is the first user message
+	go func() {
+		if err := s.updateSessionTitleFromFirstMessage(context.Background(), req.SessionID, req.Message); err != nil {
+			s.logger.Error().Err(err).Str("session_id", req.SessionID).Msg("Failed to update session title")
+		}
+	}()
+
 	// Create channel for Ollama responses
 	ollamaResponseChan := make(chan models.StreamResponse, 100)
 	
@@ -298,7 +313,12 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 			CreatedAt:  time.Now(),
 		}
 
-		if err := s.SaveMessage(ctx, assistantMessage); err != nil {
+		// Use a separate context for saving to avoid cancellation issues
+		// when the original request context is canceled
+		saveCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := s.SaveMessage(saveCtx, assistantMessage); err != nil {
 			s.logger.Error().Err(err).
 				Str("session_id", req.SessionID).
 				Msg("Failed to save assistant message")
@@ -308,6 +328,17 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 				Str("message_id", assistantMessage.ID).
 				Int("tokens_used", totalTokens).
 				Msg("Streaming chat request completed")
+		}
+
+		// Process message for semantic memory (async) with separate context
+		if s.semanticMemory != nil {
+			go func() {
+				memoryCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				defer cancel()
+				if err := s.semanticMemory.ProcessMessageForSemanticMemory(memoryCtx, assistantMessage); err != nil {
+					s.logger.Error().Err(err).Str("message_id", assistantMessage.ID).Msg("Failed to process assistant message for semantic memory")
+				}
+			}()
 		}
 	}
 
@@ -401,7 +432,7 @@ func (s *ChatService) ensureSession(ctx context.Context, sessionID string) error
 	}
 
 	if !exists {
-		// Create new session
+		// Create new session with default title (will be updated with first message)
 		session := models.Session{
 			ID:        sessionID,
 			Title:     "New Chat",
@@ -514,6 +545,58 @@ func (s *ChatService) UpdateSessionTitle(ctx context.Context, sessionID, title s
 		Str("title", title).
 		Msg("Session title updated")
 
+	return nil
+}
+
+// generateTitleFromMessage creates a title from the first few words of a message
+func (s *ChatService) generateTitleFromMessage(message string) string {
+	// Remove extra whitespace and split into words
+	words := strings.Fields(strings.TrimSpace(message))
+	
+	// Take first 5-7 words for the title
+	maxWords := 6
+	if len(words) > maxWords {
+		words = words[:maxWords]
+	}
+	
+	title := strings.Join(words, " ")
+	
+	// Limit title length to 50 characters
+	if len(title) > 50 {
+		title = title[:47] + "..."
+	}
+	
+	// If title is empty or too short, use default
+	if len(strings.TrimSpace(title)) < 3 {
+		return "New Chat"
+	}
+	
+	return title
+}
+
+// updateSessionTitleFromFirstMessage updates session title if it's still the default
+func (s *ChatService) updateSessionTitleFromFirstMessage(ctx context.Context, sessionID, message string) error {
+	// Check if session still has default title
+	var currentTitle string
+	err := s.db.QueryRowContext(ctx, "SELECT title FROM sessions WHERE id = $1", sessionID).Scan(&currentTitle)
+	if err != nil {
+		return fmt.Errorf("failed to get current session title: %w", err)
+	}
+	
+	// Only update if it's still the default title
+	if currentTitle == "New Chat" {
+		newTitle := s.generateTitleFromMessage(message)
+		if err := s.UpdateSessionTitle(ctx, sessionID, newTitle); err != nil {
+			return fmt.Errorf("failed to update session title: %w", err)
+		}
+		
+		s.logger.Info().
+			Str("session_id", sessionID).
+			Str("old_title", currentTitle).
+			Str("new_title", newTitle).
+			Msg("Updated session title from first message")
+	}
+	
 	return nil
 }
 
