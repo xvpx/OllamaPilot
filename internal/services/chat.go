@@ -78,7 +78,7 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 	// Get relevant context from semantic memory if enabled
 	var relevantContext string
 	if s.config.EnableSemanticMemory && s.semanticMemory != nil {
-		context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, req.SessionID, s.config.MaxContextResults)
+		context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, "", s.config.MaxContextResults)
 		if err != nil {
 			s.logger.Warn().Err(err).Msg("Failed to retrieve semantic context, continuing without it")
 		} else if context != "" {
@@ -141,12 +141,32 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 
 	// Process messages for semantic memory (async)
 	if s.semanticMemory != nil {
+		// Create copies of messages to avoid race conditions in goroutine
+		userMsgCopy := models.Message{
+			ID:         userMessage.ID,
+			SessionID:  userMessage.SessionID,
+			Role:       userMessage.Role,
+			Content:    userMessage.Content,
+			Model:      userMessage.Model,
+			TokensUsed: userMessage.TokensUsed,
+			CreatedAt:  userMessage.CreatedAt,
+		}
+		assistantMsgCopy := models.Message{
+			ID:         assistantMessage.ID,
+			SessionID:  assistantMessage.SessionID,
+			Role:       assistantMessage.Role,
+			Content:    assistantMessage.Content,
+			Model:      assistantMessage.Model,
+			TokensUsed: assistantMessage.TokensUsed,
+			CreatedAt:  assistantMessage.CreatedAt,
+		}
+		
 		go func() {
-			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), userMessage); err != nil {
-				s.logger.Error().Err(err).Str("message_id", userMessage.ID).Msg("Failed to process user message for semantic memory")
+			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), userMsgCopy); err != nil {
+				s.logger.Error().Err(err).Str("message_id", userMsgCopy.ID).Msg("Failed to process user message for semantic memory")
 			}
-			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), assistantMessage); err != nil {
-				s.logger.Error().Err(err).Str("message_id", assistantMessage.ID).Msg("Failed to process assistant message for semantic memory")
+			if err := s.semanticMemory.ProcessMessageForSemanticMemory(context.Background(), assistantMsgCopy); err != nil {
+				s.logger.Error().Err(err).Str("message_id", assistantMsgCopy.ID).Msg("Failed to process assistant message for semantic memory")
 			}
 		}()
 	}
@@ -258,7 +278,7 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 		// Get relevant context for streaming as well if enabled
 		var streamingContext string
 		if s.config.EnableSemanticMemory && s.semanticMemory != nil {
-			context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, req.SessionID, s.config.MaxContextResults)
+			context, err := s.semanticMemory.GetRelevantContext(ctx, req.Message, "", s.config.MaxContextResults)
 			if err != nil {
 				s.logger.Warn().Err(err).Msg("Failed to retrieve semantic context for streaming, continuing without it")
 			} else {
@@ -323,13 +343,40 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 				Msg("Streaming chat request completed")
 		}
 
-		// Process message for semantic memory (async) with separate context
+		// Process messages for semantic memory (async) with separate context
 		if s.semanticMemory != nil {
+			// Create copies of messages to avoid race conditions
+			userMsgCopy := models.Message{
+				ID:         userMessage.ID,
+				SessionID:  userMessage.SessionID,
+				Role:       userMessage.Role,
+				Content:    userMessage.Content,
+				Model:      userMessage.Model,
+				TokensUsed: userMessage.TokensUsed,
+				CreatedAt:  userMessage.CreatedAt,
+			}
+			assistantMsgCopy := models.Message{
+				ID:         assistantMessage.ID,
+				SessionID:  assistantMessage.SessionID,
+				Role:       assistantMessage.Role,
+				Content:    assistantMessage.Content,
+				Model:      assistantMessage.Model,
+				TokensUsed: assistantMessage.TokensUsed,
+				CreatedAt:  assistantMessage.CreatedAt,
+			}
+			
 			go func() {
 				memoryCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 				defer cancel()
-				if err := s.semanticMemory.ProcessMessageForSemanticMemory(memoryCtx, assistantMessage); err != nil {
-					s.logger.Error().Err(err).Str("message_id", assistantMessage.ID).Msg("Failed to process assistant message for semantic memory")
+				
+				// Process user message first
+				if err := s.semanticMemory.ProcessMessageForSemanticMemory(memoryCtx, userMsgCopy); err != nil {
+					s.logger.Error().Err(err).Str("message_id", userMsgCopy.ID).Msg("Failed to process user message for semantic memory")
+				}
+				
+				// Then process assistant message
+				if err := s.semanticMemory.ProcessMessageForSemanticMemory(memoryCtx, assistantMsgCopy); err != nil {
+					s.logger.Error().Err(err).Str("message_id", assistantMsgCopy.ID).Msg("Failed to process assistant message for semantic memory")
 				}
 			}()
 		}

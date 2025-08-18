@@ -24,7 +24,7 @@ type Config struct {
 
 	// Ollama configuration
 	OllamaHost    string        `env:"OLLAMA_HOST" envDefault:"localhost:11434"`
-	OllamaTimeout time.Duration `env:"OLLAMA_TIMEOUT" envDefault:"30s"`
+	OllamaTimeout time.Duration `env:"OLLAMA_TIMEOUT" envDefault:"300s"`
 
 	// Logging configuration
 	LogLevel  string `env:"LOG_LEVEL" envDefault:"info"`
