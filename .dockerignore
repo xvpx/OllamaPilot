@@ -32,10 +32,10 @@ data/
 .DS_Store
 Thumbs.db
 
-# Test files
-*_test.go
-test/
-coverage.out
+# Test files (commented out for CI compatibility)
+# *_test.go
+# test/
+# coverage.out
 
 # Temporary files
 tmp/
