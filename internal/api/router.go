@@ -70,32 +70,71 @@ func (rt *Router) SetupRoutes() http.Handler {
 
 	// API v1 routes
 	r.Route("/v1", func(r chi.Router) {
+		// Authentication handlers
+		rt.logger.Info().Msg("Creating auth handler for routes")
+		authHandler := handlers.NewAuthHandler(rt.db, rt.cfg, rt.logger)
+		rt.logger.Info().Msg("Auth handler created, registering routes")
+		
+		// Public authentication endpoints (no auth required)
+		rt.logger.Info().Msg("Registering auth/register route")
+		r.Post("/auth/register", authHandler.Register)
+		rt.logger.Info().Msg("Registering auth/login route")
+		r.Post("/auth/login", authHandler.Login)
+		rt.logger.Info().Msg("Auth routes registered successfully")
+		
+		// Protected authentication endpoints (auth required)
+		r.Group(func(r chi.Router) {
+			r.Use(apiMiddleware.AuthMiddleware(authHandler.GetAuthService()))
+			r.Get("/auth/profile", authHandler.GetProfile)
+			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/auth/refresh", authHandler.RefreshToken)
+		})
+		
+		// Simple test endpoint to verify routing
+		r.Get("/test", func(w http.ResponseWriter, r *http.Request) {
+			rt.logger.Info().Str("method", r.Method).Str("path", r.URL.Path).Msg("Test endpoint hit")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status": "ok", "message": "Test endpoint working"}`))
+		})
+		
 		// Chat handlers
 		chatHandler := handlers.NewChatHandler(rt.db, rt.cfg, rt.logger)
 		
-		// Chat endpoints
-		r.Post("/chat", chatHandler.Chat)
+		// Protected routes (require authentication)
+		r.Group(func(r chi.Router) {
+			r.Use(apiMiddleware.AuthMiddleware(authHandler.GetAuthService()))
+			
+			// Chat endpoints
+			r.Post("/chat", chatHandler.Chat)
+			
+			// Session endpoints
+			r.Get("/sessions", chatHandler.GetSessions)
+			r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
+			r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
+			
+			// Project handlers
+			projectHandler := handlers.NewProjectHandler(rt.db, rt.cfg, rt.logger)
+			
+			// Project endpoints
+			r.Get("/projects", projectHandler.GetProjects)
+			r.Post("/projects", projectHandler.CreateProject)
+			r.Get("/projects/{projectID}", projectHandler.GetProject)
+			r.Put("/projects/{projectID}", projectHandler.UpdateProject)
+			r.Delete("/projects/{projectID}", projectHandler.DeleteProject)
+			r.Get("/projects/{projectID}/sessions", projectHandler.GetProjectSessions)
+			
+			// Semantic memory endpoints
+			r.Post("/memory/search", chatHandler.SearchMemory)
+			r.Get("/memory/summaries", chatHandler.GetMemorySummaries)
+			r.Post("/memory/summaries", chatHandler.CreateMemorySummary)
+			r.Get("/memory/gaps/{sessionID}", chatHandler.GetMemoryGaps)
+		})
 		
-		// Session endpoints
-		r.Get("/sessions", chatHandler.GetSessions)
-		r.Get("/sessions/{sessionID}/messages", chatHandler.GetSessionMessages)
-		r.Delete("/sessions/{sessionID}", chatHandler.DeleteSession)
-		
-// Project handlers
-		projectHandler := handlers.NewProjectHandler(rt.db, rt.cfg, rt.logger)
-		
-		// Project endpoints
-		r.Get("/projects", projectHandler.GetProjects)
-		r.Post("/projects", projectHandler.CreateProject)
-		r.Get("/projects/{projectID}", projectHandler.GetProject)
-		r.Put("/projects/{projectID}", projectHandler.UpdateProject)
-		r.Delete("/projects/{projectID}", projectHandler.DeleteProject)
-		r.Get("/projects/{projectID}/sessions", projectHandler.GetProjectSessions)
-		
-		// Model management handlers
+		// Model management handlers (can be public or protected based on requirements)
 		modelsHandler := handlers.NewModelsHandler(rt.db, rt.cfg, rt.logger)
 		
-		// Model endpoints
+		// Model endpoints (keeping these public for now, but can be moved to protected group)
 		r.Get("/models", modelsHandler.GetModels)
 		r.Get("/models/{modelID}", modelsHandler.GetModel)
 		r.Put("/models/{modelID}", modelsHandler.UpdateModel)
@@ -120,12 +159,6 @@ func (rt *Router) SetupRoutes() http.Handler {
 		// Model deletion endpoints
 		r.Delete("/models/{modelID}/hard", modelsHandler.HardDeleteModel) // Hard delete
 		r.Post("/models/{modelID}/restore", modelsHandler.RestoreModel)   // Restore soft-deleted model
-		
-		// Semantic memory endpoints
-		r.Post("/memory/search", chatHandler.SearchMemory)
-		r.Get("/memory/summaries", chatHandler.GetMemorySummaries)
-		r.Post("/memory/summaries", chatHandler.CreateMemorySummary)
-		r.Get("/memory/gaps/{sessionID}", chatHandler.GetMemoryGaps)
 	})
 
 	// Add a catch-all route for undefined endpoints

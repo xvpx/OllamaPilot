@@ -54,18 +54,17 @@ func (s *ChatService) ProcessChat(ctx context.Context, req models.ChatRequest) (
 		if s.modelManager != nil {
 			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
 			if err != nil {
-				s.logger.Warn().Err(err).Msg("No default model found, using fallback")
-				req.Model = "llama2:7b" // Fallback model
+				return nil, fmt.Errorf("no model specified and no default model available: %w", err)
 			} else {
 				req.Model = defaultModel.Name
 			}
 		} else {
-			req.Model = "llama2:7b" // Fallback model when no model manager
+			return nil, fmt.Errorf("no model specified and model manager not available")
 		}
 	}
 
-	// Ensure session exists
-	if err := s.ensureSession(ctx, req.SessionID); err != nil {
+	// Ensure session exists - use ensureSessionWithUser for proper session creation
+	if err := s.ensureSessionWithUser(ctx, req.SessionID, "debug-user-id"); err != nil {
 		return nil, fmt.Errorf("failed to ensure session: %w", err)
 	}
 
@@ -208,18 +207,27 @@ func (s *ChatService) ProcessStreamingChat(ctx context.Context, req models.ChatR
 		if s.modelManager != nil {
 			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
 			if err != nil {
-				s.logger.Warn().Err(err).Msg("No default model found, using fallback")
-				req.Model = "llama2:7b" // Fallback model
+				responseChan <- models.StreamResponse{
+					Type:      "error",
+					SessionID: req.SessionID,
+					Error:     fmt.Sprintf("No model specified and no default model available: %v", err),
+				}
+				return err
 			} else {
 				req.Model = defaultModel.Name
 			}
 		} else {
-			req.Model = "llama2:7b" // Fallback model when no model manager
+			responseChan <- models.StreamResponse{
+				Type:      "error",
+				SessionID: req.SessionID,
+				Error:     "No model specified and model manager not available",
+			}
+			return fmt.Errorf("no model specified and model manager not available")
 		}
 	}
 
-	// Ensure session exists
-	if err := s.ensureSession(ctx, req.SessionID); err != nil {
+	// Ensure session exists - use ensureSessionWithUser for proper session creation
+	if err := s.ensureSessionWithUser(ctx, req.SessionID, "debug-user-id"); err != nil {
 		responseChan <- models.StreamResponse{
 			Type:      "error",
 			SessionID: req.SessionID,
@@ -472,9 +480,27 @@ func (s *ChatService) ensureSession(ctx context.Context, sessionID string) error
 	}
 
 	if !exists {
+		return fmt.Errorf("session %s does not exist - sessions must be created with user association", sessionID)
+	}
+
+	return nil
+}
+
+// ensureSessionWithUser creates a session if it doesn't exist, associating it with a user
+func (s *ChatService) ensureSessionWithUser(ctx context.Context, sessionID, userID string) error {
+	// Check if session exists
+	var exists bool
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)", sessionID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	if !exists {
 		// Create new session with default title (will be updated with first message)
 		session := models.Session{
 			ID:        sessionID,
+			UserID:    userID,
+			ProjectID: nil, // No project association for regular sessions
 			Title:     "New Chat",
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
@@ -486,51 +512,69 @@ func (s *ChatService) ensureSession(ctx context.Context, sessionID string) error
 
 		s.logger.Info().
 			Str("session_id", sessionID).
+			Str("user_id", userID).
 			Msg("Created new session")
 	}
 
 	return nil
 }
 
-// CreateSession creates a new session
-func (s *ChatService) CreateSession(ctx context.Context, session models.Session) error {
-	query := `
-		INSERT INTO sessions (id, title, created_at, updated_at)
-		VALUES ($1, $2, $3, $4)
-	`
-
-	_, err := s.db.ExecContext(ctx, query,
-		session.ID,
-		session.Title,
-		session.CreatedAt,
-		session.UpdatedAt,
-	)
-
+// ensureSessionWithProject creates a session if it doesn't exist, associating it with a user and project
+func (s *ChatService) ensureSessionWithProject(ctx context.Context, sessionID, userID, projectID string) error {
+	// Check if session exists
+	var exists bool
+	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = $1)", sessionID).Scan(&exists)
 	if err != nil {
-		return fmt.Errorf("failed to create session: %w", err)
+		return fmt.Errorf("failed to check session existence: %w", err)
+	}
+
+	if !exists {
+		// Create new session with default title (will be updated with first message)
+		session := models.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			ProjectID: &projectID,
+			Title:     "New Chat",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		if err := s.CreateSession(ctx, session); err != nil {
+			return fmt.Errorf("failed to create session: %w", err)
+		}
+
+		s.logger.Info().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Str("project_id", projectID).
+			Msg("Created new project session")
 	}
 
 	return nil
 }
 
-// GetSessions retrieves all sessions with message counts
-func (s *ChatService) GetSessions(ctx context.Context) ([]models.Session, error) {
+// GetSessionsByProject retrieves all sessions for a specific project with message counts
+func (s *ChatService) GetSessionsByProject(ctx context.Context, projectID, userID string) ([]models.Session, error) {
 	query := `
-		SELECT 
-			s.id, 
-			s.title, 
-			s.created_at, 
+		SELECT
+			s.id,
+			s.user_id,
+			s.project_id,
+			s.title,
+			s.created_at,
 			s.updated_at,
 			COUNT(m.id) as message_count
 		FROM sessions s
 		LEFT JOIN messages m ON s.id = m.session_id
-		GROUP BY s.id, s.title, s.created_at, s.updated_at
+		INNER JOIN projects p ON s.project_id = p.id
+		WHERE s.project_id = $1 AND p.user_id = $2
+		GROUP BY s.id, s.user_id, s.project_id, s.title, s.created_at, s.updated_at
 		ORDER BY s.updated_at DESC
 	`
 
-	rows, err := s.db.QueryContext(ctx, query)
+	rows, err := s.db.QueryContext(ctx, query, projectID, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query sessions: %w", err)
+		return nil, fmt.Errorf("failed to query sessions for project: %w", err)
 	}
 	defer rows.Close()
 
@@ -539,6 +583,8 @@ func (s *ChatService) GetSessions(ctx context.Context) ([]models.Session, error)
 		var session models.Session
 		err := rows.Scan(
 			&session.ID,
+			&session.UserID,
+			&session.ProjectID,
 			&session.Title,
 			&session.CreatedAt,
 			&session.UpdatedAt,
@@ -556,6 +602,151 @@ func (s *ChatService) GetSessions(ctx context.Context) ([]models.Session, error)
 	}
 
 	return sessions, nil
+}
+
+// CreateSession creates a new session
+func (s *ChatService) CreateSession(ctx context.Context, session models.Session) error {
+	query := `
+		INSERT INTO sessions (id, user_id, project_id, title, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`
+
+	_, err := s.db.ExecContext(ctx, query,
+		session.ID,
+		session.UserID,
+		session.ProjectID,
+		session.Title,
+		session.CreatedAt,
+		session.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to create session: %w", err)
+	}
+
+	return nil
+}
+
+// GetSessions retrieves all sessions with message counts
+func (s *ChatService) GetSessions(ctx context.Context) ([]models.Session, error) {
+	query := `
+		SELECT
+			s.id,
+			s.user_id,
+			s.title,
+			s.created_at,
+			s.updated_at,
+			COUNT(m.id) as message_count
+		FROM sessions s
+		LEFT JOIN messages m ON s.id = m.session_id
+		GROUP BY s.id, s.user_id, s.title, s.created_at, s.updated_at
+		ORDER BY s.updated_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []models.Session
+	for rows.Next() {
+		var session models.Session
+		err := rows.Scan(
+			&session.ID,
+			&session.UserID,
+			&session.Title,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+			&session.MessageCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating sessions: %w", err)
+	}
+
+	return sessions, nil
+}
+
+// GetSessionsByUser retrieves all sessions for a specific user with message counts
+func (s *ChatService) GetSessionsByUser(ctx context.Context, userID string) ([]models.Session, error) {
+	query := `
+		SELECT
+			s.id,
+			s.user_id,
+			s.project_id,
+			s.title,
+			s.created_at,
+			s.updated_at,
+			COUNT(m.id) as message_count
+		FROM sessions s
+		LEFT JOIN messages m ON s.id = m.session_id
+		WHERE s.user_id = $1
+		GROUP BY s.id, s.user_id, s.project_id, s.title, s.created_at, s.updated_at
+		ORDER BY s.updated_at DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query sessions for user: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []models.Session
+	for rows.Next() {
+		var session models.Session
+		err := rows.Scan(
+			&session.ID,
+			&session.UserID,
+			&session.ProjectID,
+			&session.Title,
+			&session.CreatedAt,
+			&session.UpdatedAt,
+			&session.MessageCount,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan session: %w", err)
+		}
+
+		sessions = append(sessions, session)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating sessions: %w", err)
+	}
+
+	return sessions, nil
+}
+
+// GetSessionByID retrieves a session by its ID
+func (s *ChatService) GetSessionByID(ctx context.Context, sessionID string) (*models.Session, error) {
+	query := `
+		SELECT id, user_id, project_id, title, created_at, updated_at
+		FROM sessions
+		WHERE id = $1
+	`
+
+	var session models.Session
+	err := s.db.QueryRowContext(ctx, query, sessionID).Scan(
+		&session.ID,
+		&session.UserID,
+		&session.ProjectID,
+		&session.Title,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	return &session, nil
 }
 
 // UpdateSessionTitle updates the title of a session
@@ -688,4 +879,118 @@ func (s *ChatService) DeleteSession(ctx context.Context, sessionID string) error
 		Msg("Session and messages deleted successfully")
 
 	return nil
+}
+
+// UpdateSessionOwnership updates the ownership of a session to a new user
+func (s *ChatService) UpdateSessionOwnership(ctx context.Context, sessionID, newUserID string) error {
+	query := `
+		UPDATE sessions
+		SET user_id = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`
+
+	result, err := s.db.ExecContext(ctx, query, newUserID, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to update session ownership: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("session not found")
+	}
+
+	s.logger.Info().
+		Str("session_id", sessionID).
+		Str("new_user_id", newUserID).
+		Msg("Session ownership updated")
+
+	return nil
+}
+
+// ProcessChatWithUser handles a non-streaming chat request with user context
+func (s *ChatService) ProcessChatWithUser(ctx context.Context, req models.ChatRequest, userID string) (*models.ChatResponse, error) {
+	// Validate model if specified
+	if req.Model != "" {
+		if s.modelManager != nil {
+			if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
+				return nil, fmt.Errorf("invalid model: %w", err)
+			}
+		}
+	} else {
+		// Use default model if none specified
+		if s.modelManager != nil {
+			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("no model specified and no default model available: %w", err)
+			} else {
+				req.Model = defaultModel.Name
+			}
+		} else {
+			return nil, fmt.Errorf("no model specified and model manager not available")
+		}
+	}
+
+	// Ensure session exists with user association
+	if err := s.ensureSessionWithUser(ctx, req.SessionID, userID); err != nil {
+		return nil, fmt.Errorf("failed to ensure session: %w", err)
+	}
+
+	// Continue with the rest of the processing...
+	return s.ProcessChat(ctx, req)
+}
+
+// ProcessStreamingChatWithUser handles a streaming chat request with user context
+func (s *ChatService) ProcessStreamingChatWithUser(ctx context.Context, req models.ChatRequest, userID string, responseChan chan<- models.StreamResponse) error {
+	// Validate model if specified
+	if req.Model != "" {
+		if s.modelManager != nil {
+			if err := s.modelManager.ValidateModel(ctx, req.Model); err != nil {
+				responseChan <- models.StreamResponse{
+					Type:      "error",
+					SessionID: req.SessionID,
+					Error:     fmt.Sprintf("Invalid model: %v", err),
+				}
+				return err
+			}
+		}
+	} else {
+		// Use default model if none specified
+		if s.modelManager != nil {
+			defaultModel, err := s.modelManager.GetDefaultModel(ctx)
+			if err != nil {
+				responseChan <- models.StreamResponse{
+					Type:      "error",
+					SessionID: req.SessionID,
+					Error:     fmt.Sprintf("No model specified and no default model available: %v", err),
+				}
+				return err
+			} else {
+				req.Model = defaultModel.Name
+			}
+		} else {
+			responseChan <- models.StreamResponse{
+				Type:      "error",
+				SessionID: req.SessionID,
+				Error:     "No model specified and model manager not available",
+			}
+			return fmt.Errorf("no model specified and model manager not available")
+		}
+	}
+
+	// Ensure session exists with user association
+	if err := s.ensureSessionWithUser(ctx, req.SessionID, userID); err != nil {
+		responseChan <- models.StreamResponse{
+			Type:      "error",
+			SessionID: req.SessionID,
+			Error:     fmt.Sprintf("Failed to ensure session: %v", err),
+		}
+		return err
+	}
+
+	// Continue with the rest of the streaming processing...
+	return s.ProcessStreamingChat(ctx, req, responseChan)
 }

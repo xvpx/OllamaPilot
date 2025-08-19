@@ -1,8 +1,8 @@
-# Chat Ollama MVP - Docker Deployment Guide
+# Ollama Pilot MVP - Docker Deployment Guide
 
 ## Overview
 
-This guide provides comprehensive instructions for deploying the Chat Ollama MVP using Docker containers. The setup includes a production-ready Go API server and Ollama service with proper networking, health checks, and data persistence.
+This guide provides comprehensive instructions for deploying the Ollama Pilot MVP using Docker containers. The setup includes a production-ready Go API server and Ollama service with proper networking, health checks, and data persistence.
 
 ## Architecture
 
@@ -37,7 +37,7 @@ This guide provides comprehensive instructions for deploying the Chat Ollama MVP
 
 ### 1. Clone and Navigate
 ```bash
-cd /path/to/chat_ollama
+cd /path/to/ollamapilot
 ```
 
 ### 2. Build and Start Services
@@ -244,7 +244,7 @@ docker exec chat_ollama-api-1 ls -la /data/
 
 # Reset database (WARNING: deletes all data)
 docker-compose down
-docker volume rm chat_ollama_chat_data
+docker volume rm ollamapilot_chat_data
 docker-compose up -d
 ```
 

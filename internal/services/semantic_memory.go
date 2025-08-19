@@ -280,6 +280,197 @@ func (s *SemanticMemoryService) SearchSimilarMessages(ctx context.Context, query
 	return results, nil
 }
 
+// SearchSimilarMessagesByUser finds messages similar to the given query for a specific user
+func (s *SemanticMemoryService) SearchSimilarMessagesByUser(ctx context.Context, query string, limit int, userID string, sessionID string) ([]MemorySearchResult, error) {
+	// Generate embedding for the query
+	queryEmbedding, err := s.embeddingService.GenerateEmbedding(ctx, query, s.defaultModel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate query embedding: %w", err)
+	}
+
+	_, ok := s.db.(*database.PostgresDB)
+	if !ok {
+		return nil, fmt.Errorf("semantic search not supported for this database type")
+	}
+
+	// Build query with user filter and optional session filter
+	var sqlQuery string
+	var args []interface{}
+	
+	if sessionID != "" {
+		sqlQuery = `
+			SELECT me.message_id, me.session_id, me.content, me.role, me.message_created_at, me.model_used,
+				   (me.embedding <=> $1) as distance
+			FROM message_embeddings me
+			JOIN sessions s ON me.session_id = s.id
+			WHERE s.user_id = $2 AND me.session_id = $3
+			ORDER BY me.embedding <=> $1
+			LIMIT $4
+		`
+		args = []interface{}{pgvector.NewVector(queryEmbedding), userID, sessionID, limit}
+	} else {
+		sqlQuery = `
+			SELECT me.message_id, me.session_id, me.content, me.role, me.message_created_at, me.model_used,
+				   (me.embedding <=> $1) as distance
+			FROM message_embeddings me
+			JOIN sessions s ON me.session_id = s.id
+			WHERE s.user_id = $2
+			ORDER BY me.embedding <=> $1
+			LIMIT $3
+		`
+		args = []interface{}{pgvector.NewVector(queryEmbedding), userID, limit}
+	}
+
+	rows, err := s.db.Query(sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute similarity search: %w", err)
+	}
+	defer rows.Close()
+
+	var results []MemorySearchResult
+	for rows.Next() {
+		var result MemorySearchResult
+		var distance float64
+		var model sql.NullString
+
+		err := rows.Scan(
+			&result.MessageID,
+			&result.SessionID,
+			&result.Content,
+			&result.Role,
+			&result.CreatedAt,
+			&model,
+			&distance,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan search result: %w", err)
+		}
+
+		if model.Valid {
+			result.Model = model.String
+		}
+
+		// Convert distance to similarity (1 - distance for cosine distance)
+		result.Similarity = 1.0 - distance
+
+		results = append(results, result)
+	}
+
+	s.logger.Info().
+		Str("query", query).
+		Str("user_id", userID).
+		Int("results_count", len(results)).
+		Str("session_id", sessionID).
+		Msg("User-filtered semantic search completed")
+
+	return results, nil
+}
+
+// GetMemorySummariesByUser retrieves memory summaries for a specific user
+func (s *SemanticMemoryService) GetMemorySummariesByUser(ctx context.Context, userID, sessionID, summaryType string) ([]MemorySummary, error) {
+	var query string
+	var args []interface{}
+	
+	// Build query based on filters with user constraint
+	if sessionID != "" && summaryType != "" {
+		query = `
+			SELECT ms.id, ms.session_id, ms.summary_type, ms.title, ms.content, ms.relevance_score,
+				   ms.start_time, ms.end_time, ms.message_count, ms.created_at
+			FROM memory_summaries ms
+			LEFT JOIN sessions s ON ms.session_id = s.id
+			WHERE (ms.user_id = $1 OR s.user_id = $1) AND ms.session_id = $2 AND ms.summary_type = $3
+			ORDER BY ms.created_at DESC
+		`
+		args = []interface{}{userID, sessionID, summaryType}
+	} else if sessionID != "" {
+		query = `
+			SELECT ms.id, ms.session_id, ms.summary_type, ms.title, ms.content, ms.relevance_score,
+				   ms.start_time, ms.end_time, ms.message_count, ms.created_at
+			FROM memory_summaries ms
+			LEFT JOIN sessions s ON ms.session_id = s.id
+			WHERE (ms.user_id = $1 OR s.user_id = $1) AND ms.session_id = $2
+			ORDER BY ms.created_at DESC
+		`
+		args = []interface{}{userID, sessionID}
+	} else if summaryType != "" {
+		query = `
+			SELECT ms.id, ms.session_id, ms.summary_type, ms.title, ms.content, ms.relevance_score,
+				   ms.start_time, ms.end_time, ms.message_count, ms.created_at
+			FROM memory_summaries ms
+			LEFT JOIN sessions s ON ms.session_id = s.id
+			WHERE (ms.user_id = $1 OR s.user_id = $1) AND ms.summary_type = $2
+			ORDER BY ms.created_at DESC
+		`
+		args = []interface{}{userID, summaryType}
+	} else {
+		query = `
+			SELECT ms.id, ms.session_id, ms.summary_type, ms.title, ms.content, ms.relevance_score,
+				   ms.start_time, ms.end_time, ms.message_count, ms.created_at
+			FROM memory_summaries ms
+			LEFT JOIN sessions s ON ms.session_id = s.id
+			WHERE (ms.user_id = $1 OR s.user_id = $1)
+			ORDER BY ms.created_at DESC
+		`
+		args = []interface{}{userID}
+	}
+	
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query memory summaries for user: %w", err)
+	}
+	defer rows.Close()
+	
+	var summaries []MemorySummary
+	for rows.Next() {
+		var summary MemorySummary
+		var sessionIDPtr sql.NullString
+		var titlePtr sql.NullString
+		var startTimePtr sql.NullTime
+		var endTimePtr sql.NullTime
+		
+		err := rows.Scan(
+			&summary.ID,
+			&sessionIDPtr,
+			&summary.SummaryType,
+			&titlePtr,
+			&summary.Content,
+			&summary.RelevanceScore,
+			&startTimePtr,
+			&endTimePtr,
+			&summary.MessageCount,
+			&summary.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan memory summary: %w", err)
+		}
+		
+		// Handle nullable fields
+		if sessionIDPtr.Valid {
+			summary.SessionID = sessionIDPtr.String
+		}
+		if titlePtr.Valid {
+			summary.Title = titlePtr.String
+		}
+		if startTimePtr.Valid {
+			summary.StartTime = startTimePtr.Time
+		}
+		if endTimePtr.Valid {
+			summary.EndTime = endTimePtr.Time
+		}
+		
+		summaries = append(summaries, summary)
+	}
+	
+	s.logger.Info().
+		Str("user_id", userID).
+		Str("session_id", sessionID).
+		Str("summary_type", summaryType).
+		Int("summaries_count", len(summaries)).
+		Msg("Memory summaries retrieved for user")
+	
+	return summaries, nil
+}
+
 // CreateMemorySummary creates a summary of a conversation or topic
 func (s *SemanticMemoryService) CreateMemorySummary(ctx context.Context, sessionID, summaryType, title, content string, startTime, endTime time.Time, messageCount int) (*MemorySummary, error) {
 	// Generate embedding for the summary content
@@ -332,6 +523,161 @@ func (s *SemanticMemoryService) CreateMemorySummary(ctx context.Context, session
 		Msg("Memory summary created")
 
 	return summary, nil
+}
+
+// CreateMemorySummaryWithUser creates a summary of a conversation or topic with user association
+func (s *SemanticMemoryService) CreateMemorySummaryWithUser(ctx context.Context, userID, sessionID, summaryType, title, content string, startTime, endTime time.Time, messageCount int) (*MemorySummary, error) {
+	// Generate embedding for the summary content
+	embedding, err := s.embeddingService.GenerateEmbedding(ctx, content, s.defaultModel)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate summary embedding: %w", err)
+	}
+
+	summary := &MemorySummary{
+		ID:           uuid.New().String(),
+		SessionID:    sessionID,
+		SummaryType:  summaryType,
+		Title:        title,
+		Content:      content,
+		StartTime:    startTime,
+		EndTime:      endTime,
+		MessageCount: messageCount,
+		CreatedAt:    time.Now(),
+	}
+
+	// Store summary in database with user_id
+	if pgDB, ok := s.db.(*database.PostgresDB); ok {
+		err = pgDB.InsertVector(
+			"memory_summaries",
+			[]string{"id", "user_id", "session_id", "summary_type", "title", "content", "embedding", "start_time", "end_time", "message_count", "created_at"},
+			[]interface{}{
+				summary.ID,
+				userID,
+				summary.SessionID,
+				summary.SummaryType,
+				summary.Title,
+				summary.Content,
+				pgvector.NewVector(embedding),
+				summary.StartTime,
+				summary.EndTime,
+				summary.MessageCount,
+				summary.CreatedAt,
+			},
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to store memory summary: %w", err)
+		}
+	} else {
+		return nil, fmt.Errorf("memory summaries not supported for this database type")
+	}
+
+	s.logger.Info().
+		Str("summary_id", summary.ID).
+		Str("user_id", userID).
+		Str("session_id", sessionID).
+		Str("summary_type", summaryType).
+		Msg("Memory summary created with user association")
+
+	return summary, nil
+}
+
+// GetMemorySummaries retrieves memory summaries from the database
+func (s *SemanticMemoryService) GetMemorySummaries(ctx context.Context, sessionID, summaryType string) ([]MemorySummary, error) {
+	var query string
+	var args []interface{}
+	
+	// Build query based on filters
+	if sessionID != "" && summaryType != "" {
+		query = `
+			SELECT id, session_id, summary_type, title, content, relevance_score,
+				   start_time, end_time, message_count, created_at
+			FROM memory_summaries
+			WHERE session_id = $1 AND summary_type = $2
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{sessionID, summaryType}
+	} else if sessionID != "" {
+		query = `
+			SELECT id, session_id, summary_type, title, content, relevance_score,
+				   start_time, end_time, message_count, created_at
+			FROM memory_summaries
+			WHERE session_id = $1
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{sessionID}
+	} else if summaryType != "" {
+		query = `
+			SELECT id, session_id, summary_type, title, content, relevance_score,
+				   start_time, end_time, message_count, created_at
+			FROM memory_summaries
+			WHERE summary_type = $1
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{summaryType}
+	} else {
+		query = `
+			SELECT id, session_id, summary_type, title, content, relevance_score,
+				   start_time, end_time, message_count, created_at
+			FROM memory_summaries
+			ORDER BY created_at DESC
+		`
+		args = []interface{}{}
+	}
+	
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query memory summaries: %w", err)
+	}
+	defer rows.Close()
+	
+	var summaries []MemorySummary
+	for rows.Next() {
+		var summary MemorySummary
+		var sessionIDPtr sql.NullString
+		var titlePtr sql.NullString
+		var startTimePtr sql.NullTime
+		var endTimePtr sql.NullTime
+		
+		err := rows.Scan(
+			&summary.ID,
+			&sessionIDPtr,
+			&summary.SummaryType,
+			&titlePtr,
+			&summary.Content,
+			&summary.RelevanceScore,
+			&startTimePtr,
+			&endTimePtr,
+			&summary.MessageCount,
+			&summary.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan memory summary: %w", err)
+		}
+		
+		// Handle nullable fields
+		if sessionIDPtr.Valid {
+			summary.SessionID = sessionIDPtr.String
+		}
+		if titlePtr.Valid {
+			summary.Title = titlePtr.String
+		}
+		if startTimePtr.Valid {
+			summary.StartTime = startTimePtr.Time
+		}
+		if endTimePtr.Valid {
+			summary.EndTime = endTimePtr.Time
+		}
+		
+		summaries = append(summaries, summary)
+	}
+	
+	s.logger.Info().
+		Str("session_id", sessionID).
+		Str("summary_type", summaryType).
+		Int("summaries_count", len(summaries)).
+		Msg("Memory summaries retrieved")
+	
+	return summaries, nil
 }
 
 // DetectMemoryGaps identifies gaps in conversation context

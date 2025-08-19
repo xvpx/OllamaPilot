@@ -39,6 +39,11 @@ type Config struct {
 	EnableSemanticMemory bool   `env:"ENABLE_SEMANTIC_MEMORY" envDefault:"true"`
 	EmbeddingModel       string `env:"EMBEDDING_MODEL" envDefault:"nomic-embed-text"`
 	MaxContextResults    int    `env:"MAX_CONTEXT_RESULTS" envDefault:"5"`
+	
+	// Authentication configuration
+	JWTSecret     string        `env:"JWT_SECRET" envDefault:"your-secret-key-change-in-production"`
+	JWTExpiration time.Duration `env:"JWT_EXPIRATION" envDefault:"24h"`
+	BCryptCost    int           `env:"BCRYPT_COST" envDefault:"8"`
 }
 
 // LoadConfig loads configuration from environment variables

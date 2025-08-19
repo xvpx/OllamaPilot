@@ -9,13 +9,14 @@ class ChatApp {
         this.projects = [];
         this.isConnected = false;
         this.currentTab = 'sessions';
+        this.isAuthenticated = false;
+        this.currentUser = null;
+        this.authToken = null;
         
         this.initializeElements();
         this.attachEventListeners();
+        this.checkAuthenticationState();
         this.checkConnection();
-        this.loadSessions();
-        this.loadModels();
-        this.loadProjects();
     }
 
     initializeElements() {
@@ -35,10 +36,35 @@ class ChatApp {
         this.modelDropdown = document.getElementById('model-dropdown');
         this.currentModelName = document.getElementById('current-model-name');
         
+        // Authentication elements
+        this.authModal = document.getElementById('auth-modal');
+        this.closeAuthBtn = document.getElementById('close-auth');
+        this.loginForm = document.getElementById('login-form');
+        this.registerForm = document.getElementById('register-form');
+        this.loginFormElement = document.getElementById('login-form-element');
+        this.registerFormElement = document.getElementById('register-form-element');
+        this.showRegisterBtn = document.getElementById('show-register');
+        this.showLoginBtn = document.getElementById('show-login');
+        this.loginSubmitBtn = document.getElementById('login-submit-btn');
+        this.registerSubmitBtn = document.getElementById('register-submit-btn');
+        this.userMenu = document.querySelector('.user-menu');
+        this.userMenuDropdown = document.getElementById('user-menu-dropdown');
+        this.userMenuName = document.getElementById('user-menu-name');
+        this.userMenuEmail = document.getElementById('user-menu-email');
+        this.logoutBtn = document.getElementById('logout-btn');
+        this.userProfileBtn = document.getElementById('user-profile-btn');
+        this.userSettingsBtn = document.getElementById('user-settings-btn');
+        
         // Settings elements
         this.settingsBtn = document.getElementById('settings-btn');
         this.settingsModal = document.getElementById('settings-modal');
         this.closeSettingsBtn = document.getElementById('close-settings');
+        
+        // Settings navigation
+        this.settingsNavBtns = document.querySelectorAll('.settings-nav-btn');
+        this.generalTab = document.getElementById('general-tab');
+        this.modelsTab = document.getElementById('models-tab');
+        this.memoryTab = document.getElementById('memory-tab');
         
         // Settings form elements (with null checks)
         this.defaultStreamingToggle = document.getElementById('default-streaming');
@@ -48,6 +74,28 @@ class ChatApp {
         this.temperatureSlider = document.getElementById('temperature-slider');
         this.temperatureValue = document.getElementById('temperature-value');
         this.maxTokensInput = document.getElementById('max-tokens');
+        
+        // Memory management elements
+        this.memoryTabBtns = document.querySelectorAll('.memory-tab-btn');
+        this.entitiesTab = document.getElementById('entities-tab');
+        this.relationsTab = document.getElementById('relations-tab');
+        this.searchTab = document.getElementById('search-tab');
+        this.entityNameInput = document.getElementById('entity-name-input');
+        this.entityTypeInput = document.getElementById('entity-type-input');
+        this.entityObservationsInput = document.getElementById('entity-observations-input');
+        this.addEntityBtn = document.getElementById('add-entity-btn');
+        this.relationFromInput = document.getElementById('relation-from-input');
+        this.relationToInput = document.getElementById('relation-to-input');
+        this.relationTypeInput = document.getElementById('relation-type-input');
+        this.addRelationBtn = document.getElementById('add-relation-btn');
+        this.memorySearchInput = document.getElementById('memory-search-input');
+        this.memorySearchBtn = document.getElementById('memory-search-btn');
+        this.memoryClearBtn = document.getElementById('memory-clear-btn');
+        this.refreshMemoryBtn = document.getElementById('refresh-memory-btn');
+        this.clearAllMemoryBtn = document.getElementById('clear-all-memory-btn');
+        this.entitiesList = document.getElementById('entities-list');
+        this.relationsList = document.getElementById('relations-list');
+        this.searchResults = document.getElementById('search-results');
         
         // Optional elements that may not exist
         this.clearAllSessionsBtn = document.getElementById('clear-all-sessions');
@@ -208,6 +256,52 @@ class ChatApp {
             this.clearSearchBtn.addEventListener('click', () => this.clearSearch());
         }
         
+        // Settings navigation listeners
+        if (this.settingsNavBtns) {
+            this.settingsNavBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => this.switchSettingsTab(e.target.dataset.tab));
+            });
+        }
+        
+        // Memory management listeners
+        if (this.memoryTabBtns) {
+            this.memoryTabBtns.forEach(btn => {
+                btn.addEventListener('click', (e) => this.switchMemoryTab(e.target.dataset.tab));
+            });
+        }
+        
+        if (this.addEntityBtn) {
+            this.addEntityBtn.addEventListener('click', () => this.createMemorySummary());
+        }
+        
+        if (this.addRelationBtn) {
+            this.addRelationBtn.addEventListener('click', () => this.addRelation());
+        }
+        
+        if (this.memorySearchBtn) {
+            this.memorySearchBtn.addEventListener('click', () => this.searchMemory());
+        }
+        
+        if (this.memoryClearBtn) {
+            this.memoryClearBtn.addEventListener('click', () => this.clearMemorySearch());
+        }
+        
+        if (this.refreshMemoryBtn) {
+            this.refreshMemoryBtn.addEventListener('click', () => this.refreshMemory());
+        }
+        
+        if (this.clearAllMemoryBtn) {
+            this.clearAllMemoryBtn.addEventListener('click', () => this.clearAllMemory());
+        }
+        
+        if (this.memorySearchInput) {
+            this.memorySearchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    this.searchMemory();
+                }
+            });
+        }
+        
         // Delete confirmation modal listeners
         if (this.deleteModalCancel) {
             this.deleteModalCancel.addEventListener('click', () => this.hideDeleteModal());
@@ -271,6 +365,9 @@ class ChatApp {
         
         // Initialize project menu listeners
         this.initializeProjectMenus();
+        
+        // Authentication event listeners
+        this.attachAuthenticationListeners();
     }
 
     adjustTextareaHeight() {
@@ -312,8 +409,10 @@ class ChatApp {
     }
 
     async loadSessions() {
+        if (!this.isAuthenticated) return;
+        
         try {
-            const response = await fetch(`${this.apiBase}/v1/sessions`);
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/sessions`);
             const data = await response.json();
             
             this.sessions = data.sessions || [];
@@ -342,8 +441,10 @@ class ChatApp {
     }
 
     async updateSessionsList() {
+        if (!this.isAuthenticated) return;
+        
         try {
-            const response = await fetch(`${this.apiBase}/v1/sessions`);
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/sessions`);
             const data = await response.json();
             
             this.sessions = data.sessions || [];
@@ -357,8 +458,10 @@ class ChatApp {
     }
 
     async loadProjects() {
+        if (!this.isAuthenticated) return;
+        
         try {
-            const response = await fetch(`${this.apiBase}/v1/projects`);
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/projects`);
             const data = await response.json();
             
             this.projects = data.projects || [];
@@ -587,8 +690,10 @@ class ChatApp {
     }
 
     async loadMessages(sessionId) {
+        if (!this.isAuthenticated) return;
+        
         try {
-            const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}/messages`);
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/sessions/${sessionId}/messages`);
             const data = await response.json();
             
             this.renderMessages(data.messages || []);
@@ -690,7 +795,7 @@ class ChatApp {
                 console.log('Proceeding with actual session deletion via API');
                 
                 try {
-                    const response = await fetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
+                    const response = await this.authenticatedFetch(`${this.apiBase}/v1/sessions/${sessionId}`, {
                         method: 'DELETE'
                     });
 
@@ -777,7 +882,7 @@ class ChatApp {
     }
 
     async sendNonStreamingMessage(message, model) {
-        const response = await fetch(`${this.apiBase}/v1/chat`, {
+        const response = await this.authenticatedFetch(`${this.apiBase}/v1/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -803,7 +908,7 @@ class ChatApp {
     }
 
     async sendStreamingMessage(message, model) {
-        const response = await fetch(`${this.apiBase}/v1/chat`, {
+        const response = await this.authenticatedFetch(`${this.apiBase}/v1/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -824,19 +929,29 @@ class ChatApp {
         const decoder = new TextDecoder();
         let assistantMessage = '';
         let messageElement = null;
+        let buffer = ''; // Buffer to accumulate partial data
 
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
-                const chunk = decoder.decode(value);
-                const lines = chunk.split('\n');
+                // Decode the chunk and add to buffer
+                const chunk = decoder.decode(value, { stream: true });
+                buffer += chunk;
+
+                // Process complete lines from buffer
+                const lines = buffer.split('\n');
+                // Keep the last line in buffer as it might be incomplete
+                buffer = lines.pop() || '';
 
                 for (const line of lines) {
                     if (line.startsWith('data: ')) {
+                        const jsonStr = line.slice(6).trim();
+                        if (jsonStr === '') continue; // Skip empty data lines
+                        
                         try {
-                            const data = JSON.parse(line.slice(6));
+                            const data = JSON.parse(jsonStr);
                             
                             if (data.type === 'token') {
                                 assistantMessage += data.content;
@@ -854,13 +969,32 @@ class ChatApp {
                                         tokens: data.metadata.total_tokens
                                     });
                                 }
-                                break;
+                                return; // Exit the function when done
                             } else if (data.type === 'error') {
                                 throw new Error(data.error);
                             }
                         } catch (e) {
-                            console.error('Failed to parse SSE data:', e);
+                            console.error('Failed to parse SSE data:', e, 'Raw line:', line);
+                            // Continue processing other lines instead of breaking
                         }
+                    }
+                }
+            }
+
+            // Process any remaining data in buffer
+            if (buffer.trim() && buffer.startsWith('data: ')) {
+                const jsonStr = buffer.slice(6).trim();
+                if (jsonStr !== '') {
+                    try {
+                        const data = JSON.parse(jsonStr);
+                        if (data.type === 'done' && messageElement && data.metadata) {
+                            this.updateMessageMetadata(messageElement, {
+                                model: model,
+                                tokens: data.metadata.total_tokens
+                            });
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse final SSE data:', e, 'Raw buffer:', buffer);
                     }
                 }
             }
@@ -1424,7 +1558,7 @@ class ChatApp {
     }
 
     loadSettings() {
-        const settings = JSON.parse(localStorage.getItem('chatOllamaSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem('ollamaPilotSettings') || '{}');
         
         // Apply default streaming setting
         if (settings.defaultStreaming !== undefined) {
@@ -1477,7 +1611,7 @@ class ChatApp {
             maxTokens: parseInt(this.maxTokensInput.value)
         };
         
-        localStorage.setItem('chatOllamaSettings', JSON.stringify(settings));
+        localStorage.setItem('ollamaPilotSettings', JSON.stringify(settings));
         this.applyTheme(settings.theme);
     }
 
@@ -1544,13 +1678,13 @@ class ChatApp {
     }
 
     exportSettings() {
-        const settings = JSON.parse(localStorage.getItem('chatOllamaSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem('ollamaPilotSettings') || '{}');
         const dataStr = JSON.stringify(settings, null, 2);
         const dataBlob = new Blob([dataStr], {type: 'application/json'});
         
         const link = document.createElement('a');
         link.href = URL.createObjectURL(dataBlob);
-        link.download = 'chat-ollama-settings.json';
+        link.download = 'ollama-pilot-settings.json';
         link.click();
     }
 
@@ -1567,7 +1701,7 @@ class ChatApp {
             reader.onload = (e) => {
                 try {
                     const settings = JSON.parse(e.target.result);
-                    localStorage.setItem('chatOllamaSettings', JSON.stringify(settings));
+                    localStorage.setItem('ollamaPilotSettings', JSON.stringify(settings));
                     this.loadSettings();
                     alert('Settings imported successfully!');
                 } catch (error) {
@@ -2548,7 +2682,7 @@ class ChatApp {
 
     // Override scrollToBottom to respect auto-scroll setting
     scrollToBottom() {
-        const settings = JSON.parse(localStorage.getItem('chatOllamaSettings') || '{}');
+        const settings = JSON.parse(localStorage.getItem('ollamaPilotSettings') || '{}');
         if (settings.autoScroll !== false) { // Default to true
             this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
         }
@@ -2860,7 +2994,7 @@ class ChatApp {
                         console.log('Deleting real project via API');
                         
                         // Make API call to delete the project
-                        const response = await fetch(`${this.apiBase}/v1/projects/${projectId}`, {
+                        const response = await this.authenticatedFetch(`${this.apiBase}/v1/projects/${projectId}`, {
                             method: 'DELETE'
                         });
 
@@ -2971,7 +3105,7 @@ class ChatApp {
         if (!projectName) return;
 
         try {
-            const response = await fetch(`${this.apiBase}/v1/projects`, {
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/projects`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -3516,6 +3650,759 @@ class ChatApp {
         await this.loadMessages(sessionId);
         
         this.showNotification(`Opened chat: ${chatItem?.textContent || 'Unknown'}`, 'info');
+    }
+
+    // Settings Tab Management
+    switchSettingsTab(tabName) {
+        // Update navigation buttons
+        this.settingsNavBtns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        
+        // Update tab content
+        this.generalTab.classList.toggle('active', tabName === 'general');
+        this.modelsTab.classList.toggle('active', tabName === 'models');
+        this.memoryTab.classList.toggle('active', tabName === 'memory');
+        
+        // Load data when switching tabs
+        if (tabName === 'models') {
+            // Load models when switching to models tab
+            this.loadModels();
+        } else if (tabName === 'memory') {
+            // Initialize memory tab if not already done
+            const activeMemoryTab = document.querySelector('.memory-tab-btn.active')?.dataset.tab || 'entities';
+            this.switchMemoryTab(activeMemoryTab);
+        }
+    }
+
+    // Memory Management Methods
+    switchMemoryTab(tabName) {
+        // Update tab buttons
+        this.memoryTabBtns.forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.tab === tabName);
+        });
+        
+        // Update tab content
+        this.entitiesTab.classList.toggle('active', tabName === 'summaries');
+        this.relationsTab.classList.toggle('active', tabName === 'gaps');
+        this.searchTab.classList.toggle('active', tabName === 'search');
+        
+        // Load data when switching tabs
+        if (tabName === 'summaries') {
+            this.loadMemorySummaries();
+        } else if (tabName === 'gaps') {
+            this.loadMemoryGaps();
+        }
+    }
+
+    async loadMemorySummaries() {
+        if (!this.entitiesList) return;
+        
+        this.entitiesList.innerHTML = '<div class="memory-loading"><span class="loading-spinner"></span> Loading memory summaries...</div>';
+        
+        try {
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/memory/summaries`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const data = await response.json();
+            this.renderMemorySummaries(data.summaries || []);
+        } catch (error) {
+            console.error('Failed to load memory summaries:', error);
+            this.entitiesList.innerHTML = '<div class="memory-status error">Failed to load memory summaries</div>';
+        }
+    }
+
+    renderMemorySummaries(summaries) {
+        if (!this.entitiesList) return;
+        
+        if (summaries.length === 0) {
+            this.entitiesList.innerHTML = '<div class="memory-empty-state">No memory summaries found. Summaries are automatically created as you chat.</div>';
+            return;
+        }
+        
+        this.entitiesList.innerHTML = summaries.map(summary => `
+            <div class="entity-item" data-summary-id="${summary.id}">
+                <div class="entity-header">
+                    <div>
+                        <span class="entity-name">${this.escapeHtml(summary.title || 'Untitled Summary')}</span>
+                        <span class="entity-type">${this.escapeHtml(summary.summary_type)}</span>
+                    </div>
+                    <div class="memory-item-actions">
+                        <button class="memory-action-btn delete" onclick="chatApp.deleteSummary('${summary.id}')" title="Delete summary">
+                            🗑️
+                        </button>
+                    </div>
+                </div>
+                <div class="entity-observations">
+                    <div class="observation-item">${this.escapeHtml(summary.content)}</div>
+                    ${summary.message_count ? `<div class="observation-item">Messages: ${summary.message_count}</div>` : ''}
+                    ${summary.created_at ? `<div class="observation-item">Created: ${this.formatDate(summary.created_at)}</div>` : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    async loadMemoryGaps() {
+        if (!this.relationsList) return;
+        
+        this.relationsList.innerHTML = '<div class="memory-loading"><span class="loading-spinner"></span> Loading memory gaps...</div>';
+        
+        // Get current session ID for gaps
+        const sessionId = this.currentSessionId;
+        if (!sessionId) {
+            this.relationsList.innerHTML = '<div class="memory-empty-state">Select a chat session to view memory gaps.</div>';
+            return;
+        }
+        
+        try {
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/memory/gaps/${sessionId}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const data = await response.json();
+            this.renderMemoryGaps(data.gaps || []);
+        } catch (error) {
+            console.error('Failed to load memory gaps:', error);
+            this.relationsList.innerHTML = '<div class="memory-status error">Failed to load memory gaps</div>';
+        }
+    }
+
+    renderMemoryGaps(gaps) {
+        if (!this.relationsList) return;
+        
+        if (gaps.length === 0) {
+            this.relationsList.innerHTML = '<div class="memory-empty-state">No memory gaps detected in this conversation.</div>';
+            return;
+        }
+        
+        this.relationsList.innerHTML = gaps.map(gap => `
+            <div class="relation-item">
+                <div class="relation-header">
+                    <div class="relation-description">
+                        <strong>Gap Type:</strong> ${this.escapeHtml(gap.gap_type)}
+                        <br>
+                        <strong>Duration:</strong> ${this.formatDate(gap.gap_start)} - ${this.formatDate(gap.gap_end)}
+                    </div>
+                    <div class="memory-item-actions">
+                        <button class="memory-action-btn delete" onclick="chatApp.deleteGap('${gap.id}')" title="Delete gap">
+                            🗑️
+                        </button>
+                    </div>
+                </div>
+                ${gap.context_summary ? `<div class="entity-observations"><div class="observation-item">${this.escapeHtml(gap.context_summary)}</div></div>` : ''}
+            </div>
+        `).join('');
+    }
+
+    async createMemorySummary() {
+        const title = this.entityNameInput?.value?.trim();
+        const content = this.entityObservationsInput?.value?.trim();
+        const sessionId = this.currentSessionId;
+        
+        if (!content) {
+            this.showNotification('Please enter summary content', 'error');
+            return;
+        }
+        
+        if (!sessionId) {
+            this.showNotification('Please select a chat session first', 'error');
+            return;
+        }
+        
+        try {
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/memory/summaries`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    summary_type: 'manual',
+                    title: title || 'Manual Summary',
+                    content: content
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            // Clear inputs
+            if (this.entityNameInput) this.entityNameInput.value = '';
+            if (this.entityObservationsInput) this.entityObservationsInput.value = '';
+            
+            // Reload summaries
+            this.loadMemorySummaries();
+            this.showNotification('Memory summary created successfully', 'success');
+        } catch (error) {
+            console.error('Failed to create memory summary:', error);
+            this.showNotification(`Failed to create summary: ${error.message}`, 'error');
+        }
+    }
+
+    async searchMemory() {
+        const query = this.memorySearchInput?.value?.trim();
+        
+        if (!query) {
+            this.showNotification('Please enter a search query', 'error');
+            return;
+        }
+        
+        if (!this.searchResults) return;
+        
+        this.searchResults.innerHTML = '<div class="memory-loading"><span class="loading-spinner"></span> Searching...</div>';
+        
+        try {
+            const response = await this.authenticatedFetch(`${this.apiBase}/v1/memory/search`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    query: query,
+                    session_id: this.currentSessionId,
+                    limit: 20
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            this.renderSearchResults(data.results || []);
+        } catch (error) {
+            console.error('Failed to search memory:', error);
+            this.searchResults.innerHTML = '<div class="memory-status error">Failed to search memory</div>';
+        }
+    }
+
+    renderSearchResults(results) {
+        if (!this.searchResults) return;
+        
+        if (results.length === 0) {
+            this.searchResults.innerHTML = '<div class="memory-empty-state">No results found for your search query.</div>';
+            return;
+        }
+        
+        this.searchResults.innerHTML = results.map(result => `
+            <div class="search-result-item">
+                <div class="entity-header">
+                    <div>
+                        <span class="entity-name">Message from ${this.escapeHtml(result.role || 'unknown')}</span>
+                        <span class="entity-type">Similarity: ${(result.similarity * 100).toFixed(1)}%</span>
+                    </div>
+                </div>
+                <div class="entity-observations">
+                    <div class="observation-item">${this.escapeHtml(result.content)}</div>
+                    ${result.created_at ? `<div class="observation-item">Date: ${this.formatDate(result.created_at)}</div>` : ''}
+                    ${result.session_id ? `<div class="observation-item">Session: ${this.escapeHtml(result.session_id)}</div>` : ''}
+                </div>
+            </div>
+        `).join('');
+    }
+
+    clearMemorySearch() {
+        if (this.memorySearchInput) {
+            this.memorySearchInput.value = '';
+        }
+        if (this.searchResults) {
+            this.searchResults.innerHTML = '<div class="memory-empty-state">Enter a search query to find similar messages.</div>';
+        }
+    }
+
+    async deleteSummary(summaryId) {
+        if (!confirm('Are you sure you want to delete this memory summary?')) {
+            return;
+        }
+        
+        this.showNotification('Delete functionality not yet implemented', 'info');
+        // TODO: Implement delete summary API endpoint
+    }
+
+    async deleteGap(gapId) {
+        if (!confirm('Are you sure you want to delete this memory gap?')) {
+            return;
+        }
+        
+        this.showNotification('Delete functionality not yet implemented', 'info');
+        // TODO: Implement delete gap API endpoint
+    }
+
+    async refreshMemory() {
+        // Refresh the current active tab
+        const activeTab = document.querySelector('.memory-tab-btn.active')?.dataset.tab;
+        
+        if (activeTab === 'summaries') {
+            this.loadMemorySummaries();
+        } else if (activeTab === 'gaps') {
+            this.loadMemoryGaps();
+        }
+        
+        this.showNotification('Memory data refreshed', 'success');
+    }
+
+    async clearAllMemory() {
+        this.showNotification('Clear all memory functionality not yet implemented', 'info');
+        // TODO: Implement clear all memory functionality
+    }
+
+    // Authentication Methods
+    attachAuthenticationListeners() {
+        // Authentication modal listeners
+        if (this.closeAuthBtn) {
+            this.closeAuthBtn.addEventListener('click', () => this.hideAuthModal());
+        }
+        if (this.authModal) {
+            this.authModal.addEventListener('click', (e) => {
+                if (e.target === this.authModal) {
+                    this.hideAuthModal();
+                }
+            });
+        }
+
+        // Form switching listeners
+        if (this.showRegisterBtn) {
+            this.showRegisterBtn.addEventListener('click', () => this.showRegisterForm());
+        }
+        if (this.showLoginBtn) {
+            this.showLoginBtn.addEventListener('click', () => this.showLoginForm());
+        }
+
+        // Form submission listeners
+        if (this.loginFormElement) {
+            this.loginFormElement.addEventListener('submit', (e) => this.handleLogin(e));
+        }
+        if (this.registerFormElement) {
+            this.registerFormElement.addEventListener('submit', (e) => this.handleRegister(e));
+        }
+
+        // User menu listeners
+        if (this.userMenu) {
+            this.userMenu.addEventListener('click', () => this.toggleUserMenu());
+        }
+        if (this.logoutBtn) {
+            this.logoutBtn.addEventListener('click', () => this.handleLogout());
+        }
+        if (this.userProfileBtn) {
+            this.userProfileBtn.addEventListener('click', () => this.showUserProfile());
+        }
+        if (this.userSettingsBtn) {
+            this.userSettingsBtn.addEventListener('click', () => this.openSettings());
+        }
+
+        // Close user menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (this.userMenuDropdown && !e.target.closest('.user-menu') && !e.target.closest('.user-menu-dropdown')) {
+                this.hideUserMenu();
+            }
+        });
+    }
+
+    checkAuthenticationState() {
+        // Check for stored authentication token
+        const token = localStorage.getItem('authToken');
+        const userData = localStorage.getItem('userData');
+        
+        if (token && userData) {
+            try {
+                this.authToken = token;
+                this.currentUser = JSON.parse(userData);
+                this.isAuthenticated = true;
+                this.updateAuthenticationUI();
+                this.loadUserData();
+            } catch (error) {
+                console.error('Failed to parse stored user data:', error);
+                this.clearAuthenticationData();
+                this.showAuthModal();
+            }
+        } else {
+            this.showAuthModal();
+        }
+    }
+
+    showAuthModal() {
+        if (this.authModal) {
+            this.authModal.classList.add('active');
+            document.body.style.overflow = 'hidden';
+            this.showLoginForm();
+        }
+    }
+
+    hideAuthModal() {
+        if (this.authModal) {
+            this.authModal.classList.remove('active');
+            document.body.style.overflow = '';
+            this.clearFormErrors();
+        }
+    }
+
+    showLoginForm() {
+        if (this.loginForm && this.registerForm) {
+            this.loginForm.classList.add('active');
+            this.registerForm.classList.remove('active');
+            this.clearFormErrors();
+        }
+    }
+
+    showRegisterForm() {
+        if (this.loginForm && this.registerForm) {
+            this.loginForm.classList.remove('active');
+            this.registerForm.classList.add('active');
+            this.clearFormErrors();
+        }
+    }
+
+    async handleLogin(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(e.target);
+        const email = formData.get('email');
+        const password = formData.get('password');
+
+        if (!this.validateLoginForm(email, password)) {
+            return;
+        }
+
+        this.setFormLoading(this.loginFormElement, true);
+
+        try {
+            const response = await fetch(`${this.apiBase}/v1/auth/login`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ email, password })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.detail || 'Login failed');
+            }
+
+            // Store authentication data
+            this.authToken = data.token;
+            this.currentUser = data.user;
+            this.isAuthenticated = true;
+
+            localStorage.setItem('authToken', data.token);
+            localStorage.setItem('userData', JSON.stringify(data.user));
+
+            // Update UI and load user data
+            this.updateAuthenticationUI();
+            this.hideAuthModal();
+            this.loadUserData();
+            
+            this.showNotification(`Welcome back, ${data.user.username}!`, 'success');
+
+        } catch (error) {
+            console.error('Login failed:', error);
+            this.showFormError(this.loginFormElement, error.message);
+        } finally {
+            this.setFormLoading(this.loginFormElement, false);
+        }
+    }
+
+    async handleRegister(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(e.target);
+        const username = formData.get('username');
+        const email = formData.get('email');
+        const password = formData.get('password');
+        const confirmPassword = formData.get('confirmPassword');
+
+        if (!this.validateRegisterForm(username, email, password, confirmPassword)) {
+            return;
+        }
+
+        this.setFormLoading(this.registerFormElement, true);
+
+        try {
+            const response = await fetch(`${this.apiBase}/v1/auth/register`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, email, password })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.detail || 'Registration failed');
+            }
+
+            // Store authentication data
+            this.authToken = data.token;
+            this.currentUser = data.user;
+            this.isAuthenticated = true;
+
+            localStorage.setItem('authToken', data.token);
+            localStorage.setItem('userData', JSON.stringify(data.user));
+
+            // Update UI and load user data
+            this.updateAuthenticationUI();
+            this.hideAuthModal();
+            this.loadUserData();
+            
+            this.showNotification(`Welcome to Ollama Pilot, ${data.user.username}!`, 'success');
+
+        } catch (error) {
+            console.error('Registration failed:', error);
+            this.showFormError(this.registerFormElement, error.message);
+        } finally {
+            this.setFormLoading(this.registerFormElement, false);
+        }
+    }
+
+    async handleLogout() {
+        try {
+            // Call logout endpoint
+            await fetch(`${this.apiBase}/v1/auth/logout`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.authToken}`,
+                    'Content-Type': 'application/json',
+                }
+            });
+        } catch (error) {
+            console.error('Logout request failed:', error);
+            // Continue with local logout even if server request fails
+        }
+
+        // Clear authentication data
+        this.clearAuthenticationData();
+        this.updateAuthenticationUI();
+        this.hideUserMenu();
+        
+        // Clear user-specific data
+        this.sessions = [];
+        this.projects = [];
+        this.currentSessionId = null;
+        this.currentProjectId = null;
+        this.clearSavedSessionId();
+        
+        // Reset UI
+        this.renderSessions();
+        this.renderProjects();
+        this.chatMessages.innerHTML = `
+            <div class="welcome-section">
+                <h1 class="welcome-title">What's on the agenda today?</h1>
+            </div>
+        `;
+        
+        // Show authentication modal
+        this.showAuthModal();
+        this.showNotification('You have been signed out', 'info');
+    }
+
+    validateLoginForm(email, password) {
+        this.clearFormErrors();
+        let isValid = true;
+
+        if (!email || !email.includes('@')) {
+            this.showFieldError('login-email', 'Please enter a valid email address');
+            isValid = false;
+        }
+
+        if (!password || password.length < 6) {
+            this.showFieldError('login-password', 'Password must be at least 6 characters');
+            isValid = false;
+        }
+
+        return isValid;
+    }
+
+    validateRegisterForm(username, email, password, confirmPassword) {
+        this.clearFormErrors();
+        let isValid = true;
+
+        if (!username || username.length < 3) {
+            this.showFieldError('register-username', 'Username must be at least 3 characters');
+            isValid = false;
+        }
+
+        if (!email || !email.includes('@')) {
+            this.showFieldError('register-email', 'Please enter a valid email address');
+            isValid = false;
+        }
+
+        if (!password || password.length < 6) {
+            this.showFieldError('register-password', 'Password must be at least 6 characters');
+            isValid = false;
+        }
+
+        if (password !== confirmPassword) {
+            this.showFieldError('register-confirm-password', 'Passwords do not match');
+            isValid = false;
+        }
+
+        return isValid;
+    }
+
+    showFieldError(fieldId, message) {
+        const field = document.getElementById(fieldId);
+        if (!field) return;
+
+        const formGroup = field.closest('.form-group');
+        if (!formGroup) return;
+
+        formGroup.classList.add('error');
+        
+        let errorElement = formGroup.querySelector('.error-message');
+        if (!errorElement) {
+            errorElement = document.createElement('div');
+            errorElement.className = 'error-message';
+            formGroup.appendChild(errorElement);
+        }
+        
+        errorElement.textContent = message;
+    }
+
+    showFormError(form, message) {
+        let errorElement = form.querySelector('.auth-error');
+        if (!errorElement) {
+            errorElement = document.createElement('div');
+            errorElement.className = 'auth-error';
+            form.insertBefore(errorElement, form.firstChild);
+        }
+        errorElement.textContent = message;
+    }
+
+    clearFormErrors() {
+        // Clear field errors
+        document.querySelectorAll('.form-group.error').forEach(group => {
+            group.classList.remove('error');
+        });
+        document.querySelectorAll('.error-message').forEach(error => {
+            error.textContent = '';
+        });
+
+        // Clear form errors
+        document.querySelectorAll('.auth-error').forEach(error => {
+            error.remove();
+        });
+    }
+
+    setFormLoading(form, loading) {
+        const submitBtn = form.querySelector('button[type="submit"]');
+        if (!submitBtn) return;
+
+        if (loading) {
+            form.classList.add('loading');
+            submitBtn.disabled = true;
+        } else {
+            form.classList.remove('loading');
+            submitBtn.disabled = false;
+        }
+    }
+
+    updateAuthenticationUI() {
+        if (this.isAuthenticated && this.currentUser) {
+            // Update user menu
+            if (this.userMenu) {
+                this.userMenu.classList.remove('unauthenticated');
+                this.userMenu.classList.add('authenticated');
+            }
+            
+            // Update user info in sidebar
+            const userName = document.querySelector('.user-name');
+            const userStatus = document.querySelector('.user-status');
+            if (userName) userName.textContent = this.currentUser.username;
+            if (userStatus) userStatus.textContent = 'Online';
+            
+            // Update user menu dropdown
+            if (this.userMenuName) this.userMenuName.textContent = this.currentUser.username;
+            if (this.userMenuEmail) this.userMenuEmail.textContent = this.currentUser.email;
+            
+        } else {
+            // Update user menu for unauthenticated state
+            if (this.userMenu) {
+                this.userMenu.classList.remove('authenticated');
+                this.userMenu.classList.add('unauthenticated');
+            }
+            
+            // Update user info in sidebar
+            const userName = document.querySelector('.user-name');
+            const userStatus = document.querySelector('.user-status');
+            if (userName) userName.textContent = 'Guest';
+            if (userStatus) userStatus.textContent = 'Not signed in';
+        }
+    }
+
+    toggleUserMenu() {
+        if (!this.isAuthenticated) {
+            this.showAuthModal();
+            return;
+        }
+
+        if (this.userMenuDropdown) {
+            const isActive = this.userMenuDropdown.classList.contains('active');
+            if (isActive) {
+                this.hideUserMenu();
+            } else {
+                this.showUserMenu();
+            }
+        }
+    }
+
+    showUserMenu() {
+        if (this.userMenuDropdown) {
+            this.userMenuDropdown.classList.add('active');
+        }
+    }
+
+    hideUserMenu() {
+        if (this.userMenuDropdown) {
+            this.userMenuDropdown.classList.remove('active');
+        }
+    }
+
+    showUserProfile() {
+        this.hideUserMenu();
+        this.showNotification('User profile functionality coming soon', 'info');
+    }
+
+    clearAuthenticationData() {
+        this.isAuthenticated = false;
+        this.currentUser = null;
+        this.authToken = null;
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('userData');
+    }
+
+    loadUserData() {
+        if (this.isAuthenticated) {
+            // Load user-specific data
+            this.loadSessions();
+            this.loadModels();
+            this.loadProjects();
+        }
+    }
+
+    // Override API methods to include authentication headers
+    async authenticatedFetch(url, options = {}) {
+        if (this.authToken) {
+            options.headers = {
+                ...options.headers,
+                'Authorization': `Bearer ${this.authToken}`
+            };
+        }
+        
+        const response = await fetch(url, options);
+        
+        // Handle authentication errors
+        if (response.status === 401) {
+            this.clearAuthenticationData();
+            this.updateAuthenticationUI();
+            this.showAuthModal();
+            throw new Error('Authentication required');
+        }
+        
+        return response;
     }
 }
 

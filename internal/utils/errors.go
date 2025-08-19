@@ -104,6 +104,30 @@ func NewRateLimitError(detail, instance string) APIError {
 	}
 }
 
+// NewUnauthorizedError creates a new unauthorized error
+func NewUnauthorizedError(detail, instance string) APIError {
+	return APIError{
+		Type:      ErrorTypeValidation, // Using validation type since there's no unauthorized type
+		Title:     "Unauthorized",
+		Status:    401,
+		Detail:    detail,
+		Instance:  instance,
+		Timestamp: time.Now(),
+	}
+}
+
+// NewForbiddenError creates a new forbidden error
+func NewForbiddenError(detail, instance string) APIError {
+	return APIError{
+		Type:      ErrorTypeValidation, // Using validation type since there's no forbidden type
+		Title:     "Forbidden",
+		Status:    403,
+		Detail:    detail,
+		Instance:  instance,
+		Timestamp: time.Now(),
+	}
+}
+
 // WrapError wraps a generic error into an APIError
 func WrapError(err error, errorType ErrorType, instance string) APIError {
 	var title string

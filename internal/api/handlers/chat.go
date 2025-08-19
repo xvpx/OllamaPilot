@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"chat_ollama/internal/api/middleware"
 	"chat_ollama/internal/config"
 	"chat_ollama/internal/database"
 	"chat_ollama/internal/models"
@@ -49,6 +50,17 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found, using debug user")
+	}
+
 	var req models.ChatRequest
 	if err := utils.ParseJSON(r, &req); err != nil {
 		logger.Error().Err(err).Msg("Failed to parse chat request")
@@ -70,26 +82,39 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set default model if not provided
+	// Verify session belongs to user or create it if it doesn't exist (skip for debug user)
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyOrCreateSession(req.SessionID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("session_id", req.SessionID).Msg("Skipping session ownership verification for debug user")
+	}
+
+	// Require model parameter
 	if req.Model == "" {
-		req.Model = "llama2:7b" // Default model
+		apiErr := utils.NewValidationError("Model field is required", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
 	}
 
 	logger.Info().
 		Str("session_id", req.SessionID).
+		Str("user_id", authContext.UserID).
 		Str("model", req.Model).
 		Bool("stream", req.Stream).
 		Msg("Chat request received")
 
 	if req.Stream {
-		h.handleStreamingChat(w, r, req)
+		h.handleStreamingChat(w, r, req, authContext.UserID)
 	} else {
-		h.handleNonStreamingChat(w, r, req)
+		h.handleNonStreamingChat(w, r, req, authContext.UserID)
 	}
 }
 
 // handleStreamingChat handles streaming chat requests
-func (h *ChatHandler) handleStreamingChat(w http.ResponseWriter, r *http.Request, req models.ChatRequest) {
+func (h *ChatHandler) handleStreamingChat(w http.ResponseWriter, r *http.Request, req models.ChatRequest, userID string) {
 	logger := utils.FromContext(r.Context())
 	if logger == nil {
 		logger = h.logger
@@ -111,7 +136,7 @@ func (h *ChatHandler) handleStreamingChat(w http.ResponseWriter, r *http.Request
 
 	// Start streaming chat processing
 	go func() {
-		if err := h.chatService.ProcessStreamingChat(ctx, req, responseChan); err != nil {
+		if err := h.chatService.ProcessStreamingChatWithUser(ctx, req, userID, responseChan); err != nil {
 			logger.Error().Err(err).
 				Str("session_id", req.SessionID).
 				Msg("Streaming chat processing failed")
@@ -158,7 +183,7 @@ func (h *ChatHandler) handleStreamingChat(w http.ResponseWriter, r *http.Request
 }
 
 // handleNonStreamingChat handles non-streaming chat requests
-func (h *ChatHandler) handleNonStreamingChat(w http.ResponseWriter, r *http.Request, req models.ChatRequest) {
+func (h *ChatHandler) handleNonStreamingChat(w http.ResponseWriter, r *http.Request, req models.ChatRequest, userID string) {
 	logger := utils.FromContext(r.Context())
 	if logger == nil {
 		logger = h.logger
@@ -172,7 +197,7 @@ func (h *ChatHandler) handleNonStreamingChat(w http.ResponseWriter, r *http.Requ
 		Str("session_id", req.SessionID).
 		Msg("Processing non-streaming chat request")
 
-	response, err := h.chatService.ProcessChat(ctx, req)
+	response, err := h.chatService.ProcessChatWithUser(ctx, req, userID)
 	if err != nil {
 		logger.Error().Err(err).
 			Str("session_id", req.SessionID).
@@ -199,14 +224,25 @@ func (h *ChatHandler) GetSessions(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for sessions, using debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	logger.Info().Msg("Getting sessions list")
+	logger.Info().Str("user_id", authContext.UserID).Msg("Getting sessions list")
 
-	sessions, err := h.chatService.GetSessions(ctx)
+	sessions, err := h.chatService.GetSessionsByUser(ctx, authContext.UserID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to get sessions")
+		logger.Error().Err(err).Str("user_id", authContext.UserID).Msg("Failed to get sessions")
 		apiErr := utils.NewInternalError("Failed to retrieve sessions", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -216,7 +252,7 @@ func (h *ChatHandler) GetSessions(w http.ResponseWriter, r *http.Request) {
 		Sessions: sessions,
 	}
 
-	logger.Info().Int("session_count", len(sessions)).Msg("Sessions retrieved successfully")
+	logger.Info().Str("user_id", authContext.UserID).Int("session_count", len(sessions)).Msg("Sessions retrieved successfully")
 	utils.WriteSuccess(w, response)
 }
 
@@ -227,6 +263,17 @@ func (h *ChatHandler) GetSessionMessages(w http.ResponseWriter, r *http.Request)
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for session messages, using debug user")
+	}
+
 	// Extract session ID from URL path
 	sessionID := chi.URLParam(r, "sessionID")
 	if sessionID == "" {
@@ -235,17 +282,29 @@ func (h *ChatHandler) GetSessionMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Verify session belongs to user (skip for debug user)
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifySessionOwnership(sessionID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("session_id", sessionID).Msg("Skipping session ownership verification for debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	logger.Info().
 		Str("session_id", sessionID).
+		Str("user_id", authContext.UserID).
 		Msg("Getting session messages")
 
 	messages, err := h.chatService.GetSessionMessages(ctx, sessionID)
 	if err != nil {
 		logger.Error().Err(err).
 			Str("session_id", sessionID).
+			Str("user_id", authContext.UserID).
 			Msg("Failed to get session messages")
 		apiErr := utils.NewInternalError("Failed to retrieve session messages", r.URL.Path)
 		utils.WriteError(w, apiErr)
@@ -259,6 +318,7 @@ func (h *ChatHandler) GetSessionMessages(w http.ResponseWriter, r *http.Request)
 
 	logger.Info().
 		Str("session_id", sessionID).
+		Str("user_id", authContext.UserID).
 		Int("message_count", len(messages)).
 		Msg("Session messages retrieved successfully")
 
@@ -272,6 +332,17 @@ func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for session deletion, using debug user")
+	}
+
 	// Extract session ID from URL path
 	sessionID := chi.URLParam(r, "sessionID")
 	if sessionID == "" {
@@ -280,17 +351,29 @@ func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify session belongs to user or handle legacy sessions
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyOrClaimSession(sessionID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("session_id", sessionID).Msg("Skipping session ownership verification for debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	logger.Info().
 		Str("session_id", sessionID).
+		Str("user_id", authContext.UserID).
 		Msg("Deleting session")
 
 	err := h.chatService.DeleteSession(ctx, sessionID)
 	if err != nil {
 		logger.Error().Err(err).
 			Str("session_id", sessionID).
+			Str("user_id", authContext.UserID).
 			Msg("Failed to delete session")
 		apiErr := utils.NewInternalError("Failed to delete session", r.URL.Path)
 		utils.WriteError(w, apiErr)
@@ -299,6 +382,7 @@ func (h *ChatHandler) DeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("session_id", sessionID).
+		Str("user_id", authContext.UserID).
 		Msg("Session deleted successfully")
 
 	// Return success response
@@ -377,14 +461,21 @@ func (h *ChatHandler) GetMemorySummaries(w http.ResponseWriter, r *http.Request)
 	sessionID := r.URL.Query().Get("session_id")
 	summaryType := r.URL.Query().Get("type")
 
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
 	logger.Info().
 		Str("session_id", sessionID).
 		Str("summary_type", summaryType).
 		Msg("Getting memory summaries")
 
-	// For now, return empty summaries as this requires database access
-	// TODO: Implement proper memory summaries retrieval
-	summaries := []interface{}{}
+	summaries, err := h.semanticMemory.GetMemorySummaries(ctx, sessionID, summaryType)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to get memory summaries")
+		apiErr := utils.NewInternalError("Failed to retrieve memory summaries", r.URL.Path)
+		utils.WriteError(w, apiErr)
+		return
+	}
 
 	logger.Info().
 		Int("summaries_count", len(summaries)).
@@ -511,4 +602,129 @@ func (h *ChatHandler) GetMemoryGaps(w http.ResponseWriter, r *http.Request) {
 		"count":      len(gaps),
 		"threshold":  threshold.String(),
 	})
+}
+
+// verifySessionOwnership checks if a session belongs to the specified user
+func (h *ChatHandler) verifySessionOwnership(sessionID, userID string) utils.APIError {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session, err := h.chatService.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		h.logger.Error().Err(err).Str("session_id", sessionID).Msg("Failed to get session for ownership verification")
+		return utils.NewNotFoundError("Session not found", sessionID)
+	}
+
+	if session.UserID != userID {
+		h.logger.Warn().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Str("session_user_id", session.UserID).
+			Msg("User attempted to access session they don't own")
+		return utils.NewForbiddenError("Access denied to this session", sessionID)
+	}
+
+	return utils.APIError{}
+}
+
+// verifyOrCreateSession checks if a session belongs to the specified user, or creates it if it doesn't exist
+func (h *ChatHandler) verifyOrCreateSession(sessionID, userID string) utils.APIError {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session, err := h.chatService.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		// Session doesn't exist, create it
+		h.logger.Info().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Msg("Session not found, creating new session")
+		
+		newSession := models.Session{
+			ID:        sessionID,
+			UserID:    userID,
+			Title:     "New Chat",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		
+		createErr := h.chatService.CreateSession(ctx, newSession)
+		if createErr != nil {
+			h.logger.Error().Err(createErr).
+				Str("session_id", sessionID).
+				Str("user_id", userID).
+				Msg("Failed to create new session")
+			return utils.NewInternalError("Failed to create session", sessionID)
+		}
+		
+		h.logger.Info().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Msg("New session created successfully")
+		return utils.APIError{}
+	}
+
+	// Session exists, verify ownership
+	if session.UserID != userID {
+		h.logger.Warn().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Str("session_user_id", session.UserID).
+			Msg("User attempted to access session they don't own")
+		return utils.NewForbiddenError("Access denied to this session", sessionID)
+	}
+
+	return utils.APIError{}
+}
+
+// verifyOrClaimSession checks if a session belongs to the specified user, or claims it if it's a legacy debug session
+func (h *ChatHandler) verifyOrClaimSession(sessionID, userID string) utils.APIError {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	session, err := h.chatService.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		h.logger.Error().Err(err).Str("session_id", sessionID).Msg("Failed to get session for ownership verification")
+		return utils.NewNotFoundError("Session not found", sessionID)
+	}
+
+	// If session belongs to current user, allow deletion
+	if session.UserID == userID {
+		return utils.APIError{}
+	}
+
+	// If session belongs to debug user (legacy session), allow current user to claim and delete it
+	if session.UserID == "debug-user-id" {
+		h.logger.Info().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Str("previous_user_id", session.UserID).
+			Msg("Claiming legacy debug session for deletion")
+		
+		// Update session ownership to current user before deletion
+		// This ensures proper audit trail and allows deletion
+		updateErr := h.chatService.UpdateSessionOwnership(ctx, sessionID, userID)
+		if updateErr != nil {
+			h.logger.Error().Err(updateErr).
+				Str("session_id", sessionID).
+				Str("user_id", userID).
+				Msg("Failed to claim legacy session")
+			return utils.NewInternalError("Failed to claim session for deletion", sessionID)
+		}
+		
+		h.logger.Info().
+			Str("session_id", sessionID).
+			Str("user_id", userID).
+			Msg("Successfully claimed legacy session")
+		
+		return utils.APIError{}
+	}
+
+	// Session belongs to a different real user, deny access
+	h.logger.Warn().
+		Str("session_id", sessionID).
+		Str("user_id", userID).
+		Str("session_user_id", session.UserID).
+		Msg("User attempted to access session they don't own")
+	return utils.NewForbiddenError("Access denied to this session", sessionID)
 }

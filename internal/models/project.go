@@ -7,6 +7,7 @@ import (
 // Project represents a project that can contain multiple chat sessions
 type Project struct {
 	ID          string    `json:"id" db:"id"`
+	UserID      string    `json:"user_id" db:"user_id"`
 	Name        string    `json:"name" db:"name"`
 	Description string    `json:"description,omitempty" db:"description"`
 	IsActive    bool      `json:"is_active" db:"is_active"`
