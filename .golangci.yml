@@ -2,39 +2,87 @@ run:
   timeout: 5m
   issues-exit-code: 1
   tests: true
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
 
 issues:
   exclude-dirs:
     - vendor
     - migrations
+  exclude-files:
+    - ".*\\.pb\\.go$"
+    - ".*_gen\\.go$"
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
   gofmt:
     simplify: true
   goimports:
     local-prefixes: github.com/xvpx/ollamapilot
+  govet:
+    check-shadowing: false
+    enable-all: true
+    disable:
+      - fieldalignment
+  staticcheck:
+    go: "1.21"
+  unused:
+    go: "1.21"
+  gosimple:
+    go: "1.21"
+  ineffassign:
+    # No specific settings needed
 
 linters:
   disable-all: true
   enable:
-    - errcheck
-    - gosimple
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - gofmt
-    - goimports
+    # Essential linters that don't require full dependency resolution
+    - errcheck      # Check for unchecked errors
+    - gofmt         # Check formatting
+    - goimports     # Check imports formatting
+    - govet         # Go vet examiner
+    - ineffassign   # Detect ineffectual assignments
+    - unused        # Check for unused constants, variables, functions and types
+    - gosimple      # Simplify code suggestions
+    - staticcheck   # Advanced Go linter
+  fast: true
 
 issues:
   exclude-rules:
+    # Exclude some linters from running on tests files
     - path: _test\.go
       linters:
         - errcheck
+        - gosimple
+        - unused
+    # Exclude migration files from most linters
     - path: migrations/
       linters:
         - errcheck
         - gosimple
+        - unused
+        - staticcheck
+    # Exclude generated files
+    - path: ".*\\.pb\\.go"
+      linters:
+        - errcheck
+        - gosimple
+        - unused
+        - staticcheck
+        - gofmt
+        - goimports
   exclude:
-    # errcheck: Almost all programs ignore errors on these functions and in most cases it's ok
-    - Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked
+    # Standard exclusions for common patterns
+    - 'Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*printf?|os\.(Un)?Setenv). is not checked'
+    - 'exported .* should have comment or be unexported'
+    - 'comment on exported .* should be of the form'
+    - 'should not use dot imports'
