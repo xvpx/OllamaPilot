@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"chat_ollama/internal/api/middleware"
 	"chat_ollama/internal/config"
 	"chat_ollama/internal/database"
 	"chat_ollama/internal/models"
@@ -38,20 +39,32 @@ func (h *ProjectHandler) GetProjects(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for projects, using debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	logger.Info().Msg("Getting projects list")
+	logger.Info().Str("user_id", authContext.UserID).Msg("Getting projects list")
 
 	query := `
-		SELECT id, name, description, is_active, created_at, updated_at
+		SELECT id, user_id, name, description, is_active, created_at, updated_at
 		FROM projects
+		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`
 
-	rows, err := h.db.QueryContext(ctx, query)
+	rows, err := h.db.QueryContext(ctx, query, authContext.UserID)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to query projects")
+		logger.Error().Err(err).Str("user_id", authContext.UserID).Msg("Failed to query projects")
 		apiErr := utils.NewInternalError("Failed to retrieve projects", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -63,6 +76,7 @@ func (h *ProjectHandler) GetProjects(w http.ResponseWriter, r *http.Request) {
 		var project models.Project
 		err := rows.Scan(
 			&project.ID,
+			&project.UserID,
 			&project.Name,
 			&project.Description,
 			&project.IsActive,
@@ -70,7 +84,7 @@ func (h *ProjectHandler) GetProjects(w http.ResponseWriter, r *http.Request) {
 			&project.UpdatedAt,
 		)
 		if err != nil {
-			logger.Error().Err(err).Msg("Failed to scan project row")
+			logger.Error().Err(err).Str("user_id", authContext.UserID).Msg("Failed to scan project row")
 			apiErr := utils.NewInternalError("Failed to process projects", r.URL.Path)
 			utils.WriteError(w, apiErr)
 			return
@@ -79,7 +93,7 @@ func (h *ProjectHandler) GetProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = rows.Err(); err != nil {
-		logger.Error().Err(err).Msg("Error iterating project rows")
+		logger.Error().Err(err).Str("user_id", authContext.UserID).Msg("Error iterating project rows")
 		apiErr := utils.NewInternalError("Failed to retrieve projects", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -89,7 +103,7 @@ func (h *ProjectHandler) GetProjects(w http.ResponseWriter, r *http.Request) {
 		Projects: projects,
 	}
 
-	logger.Info().Int("project_count", len(projects)).Msg("Projects retrieved successfully")
+	logger.Info().Str("user_id", authContext.UserID).Int("project_count", len(projects)).Msg("Projects retrieved successfully")
 	utils.WriteSuccess(w, response)
 }
 
@@ -100,6 +114,17 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for project, using debug user")
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		apiErr := utils.NewValidationError("Project ID is required", r.URL.Path)
@@ -107,20 +132,34 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify project ownership
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyProjectOwnership(projectID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("project_id", projectID).Msg("Skipping project ownership verification for debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	logger.Info().Str("project_id", projectID).Msg("Getting project")
+	logger.Info().
+		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
+		Msg("Getting project")
 
 	query := `
-		SELECT id, name, description, is_active, created_at, updated_at
+		SELECT id, user_id, name, description, is_active, created_at, updated_at
 		FROM projects
-		WHERE id = $1
+		WHERE id = $1 AND user_id = $2
 	`
 
 	var project models.Project
-	err := h.db.QueryRowContext(ctx, query, projectID).Scan(
+	err := h.db.QueryRowContext(ctx, query, projectID, authContext.UserID).Scan(
 		&project.ID,
+		&project.UserID,
 		&project.Name,
 		&project.Description,
 		&project.IsActive,
@@ -134,13 +173,19 @@ func (h *ProjectHandler) GetProject(w http.ResponseWriter, r *http.Request) {
 			utils.WriteError(w, apiErr)
 			return
 		}
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to get project")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to get project")
 		apiErr := utils.NewInternalError("Failed to retrieve project", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
 	}
 
-	logger.Info().Str("project_id", projectID).Msg("Project retrieved successfully")
+	logger.Info().
+		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
+		Msg("Project retrieved successfully")
 	utils.WriteSuccess(w, project)
 }
 
@@ -149,6 +194,17 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	logger := utils.FromContext(r.Context())
 	if logger == nil {
 		logger = h.logger
+	}
+
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for project creation, using debug user")
 	}
 
 	var req models.CreateProjectRequest
@@ -174,18 +230,20 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Str("name", req.Name).
 		Msg("Creating project")
 
 	query := `
-		INSERT INTO projects (id, name, description, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		RETURNING id, name, description, is_active, created_at, updated_at
+		INSERT INTO projects (id, user_id, name, description, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		RETURNING id, user_id, name, description, is_active, created_at, updated_at
 	`
 
 	var project models.Project
-	err := h.db.QueryRowContext(ctx, query, projectID, req.Name, req.Description, true).Scan(
+	err := h.db.QueryRowContext(ctx, query, projectID, authContext.UserID, req.Name, req.Description, true).Scan(
 		&project.ID,
+		&project.UserID,
 		&project.Name,
 		&project.Description,
 		&project.IsActive,
@@ -194,7 +252,10 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to create project")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to create project")
 		apiErr := utils.NewInternalError("Failed to create project", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -202,6 +263,7 @@ func (h *ProjectHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Str("name", req.Name).
 		Msg("Project created successfully")
 
@@ -215,11 +277,32 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for project update, using debug user")
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		apiErr := utils.NewValidationError("Project ID is required", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
+	}
+
+	// Verify project ownership
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyProjectOwnership(projectID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("project_id", projectID).Msg("Skipping project ownership verification for debug user")
 	}
 
 	var req models.UpdateProjectRequest
@@ -235,6 +318,7 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Msg("Updating project")
 
 	// Build dynamic update query
@@ -267,18 +351,19 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setParts = append(setParts, "updated_at = CURRENT_TIMESTAMP")
-	args = append(args, projectID)
+	args = append(args, projectID, authContext.UserID)
 
 	query := fmt.Sprintf(`
 		UPDATE projects
 		SET %s
-		WHERE id = $%d
-		RETURNING id, name, description, is_active, created_at, updated_at
-	`, strings.Join(setParts, ", "), argIndex)
+		WHERE id = $%d AND user_id = $%d
+		RETURNING id, user_id, name, description, is_active, created_at, updated_at
+	`, strings.Join(setParts, ", "), argIndex, argIndex+1)
 
 	var project models.Project
 	err := h.db.QueryRowContext(ctx, query, args...).Scan(
 		&project.ID,
+		&project.UserID,
 		&project.Name,
 		&project.Description,
 		&project.IsActive,
@@ -292,7 +377,10 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 			utils.WriteError(w, apiErr)
 			return
 		}
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to update project")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to update project")
 		apiErr := utils.NewInternalError("Failed to update project", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -300,6 +388,7 @@ func (h *ProjectHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Msg("Project updated successfully")
 
 	utils.WriteSuccess(w, project)
@@ -312,6 +401,17 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for project deletion, using debug user")
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		apiErr := utils.NewValidationError("Project ID is required", r.URL.Path)
@@ -319,35 +419,32 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Verify project ownership
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyProjectOwnership(projectID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("project_id", projectID).Msg("Skipping project ownership verification for debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Msg("Deleting project")
 
-	// First check if project exists
-	var exists bool
-	checkQuery := "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)"
-	err := h.db.QueryRowContext(ctx, checkQuery, projectID).Scan(&exists)
-	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to check project existence")
-		apiErr := utils.NewInternalError("Failed to delete project", r.URL.Path)
-		utils.WriteError(w, apiErr)
-		return
-	}
-
-	if !exists {
-		apiErr := utils.NewNotFoundError("Project not found", r.URL.Path)
-		utils.WriteError(w, apiErr)
-		return
-	}
-
 	// Delete the project (this will set project_id to NULL for associated sessions due to ON DELETE SET NULL)
-	deleteQuery := "DELETE FROM projects WHERE id = $1"
-	result, err := h.db.ExecContext(ctx, deleteQuery, projectID)
+	deleteQuery := "DELETE FROM projects WHERE id = $1 AND user_id = $2"
+	result, err := h.db.ExecContext(ctx, deleteQuery, projectID, authContext.UserID)
 	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to delete project")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to delete project")
 		apiErr := utils.NewInternalError("Failed to delete project", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -355,7 +452,10 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to get rows affected")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to get rows affected")
 		apiErr := utils.NewInternalError("Failed to delete project", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -369,6 +469,7 @@ func (h *ProjectHandler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Msg("Project deleted successfully")
 
 	// Return success response
@@ -385,6 +486,17 @@ func (h *ProjectHandler) GetProjectSessions(w http.ResponseWriter, r *http.Reque
 		logger = h.logger
 	}
 
+	// Get authenticated user from context (optional for debugging)
+	authContext, ok := middleware.GetUserFromContext(r)
+	if !ok {
+		// For debugging: create a temporary auth context
+		authContext = &models.AuthContext{
+			UserID:   "debug-user-id",
+			Username: "debug-user",
+		}
+		logger.Warn().Msg("No authentication context found for project sessions, using debug user")
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		apiErr := utils.NewValidationError("Project ID is required", r.URL.Path)
@@ -392,40 +504,40 @@ func (h *ProjectHandler) GetProjectSessions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Verify project ownership
+	if authContext.UserID != "debug-user-id" {
+		if err := h.verifyProjectOwnership(projectID, authContext.UserID); err.Type != "" {
+			utils.WriteError(w, err)
+			return
+		}
+	} else {
+		logger.Info().Str("project_id", projectID).Msg("Skipping project ownership verification for debug user")
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	logger.Info().Str("project_id", projectID).Msg("Getting project sessions")
+	logger.Info().
+		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
+		Msg("Getting project sessions")
 
-	// First check if project exists
-	var exists bool
-	checkQuery := "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)"
-	err := h.db.QueryRowContext(ctx, checkQuery, projectID).Scan(&exists)
-	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to check project existence")
-		apiErr := utils.NewInternalError("Failed to retrieve project sessions", r.URL.Path)
-		utils.WriteError(w, apiErr)
-		return
-	}
-
-	if !exists {
-		apiErr := utils.NewNotFoundError("Project not found", r.URL.Path)
-		utils.WriteError(w, apiErr)
-		return
-	}
-
-	// Get sessions for this project
+	// Get sessions for this project with user verification
 	query := `
-		SELECT id, title, created_at, updated_at,
-		       (SELECT COUNT(*) FROM messages WHERE session_id = sessions.id) as message_count
-		FROM sessions
-		WHERE project_id = $1
-		ORDER BY updated_at DESC
+		SELECT s.id, s.user_id, s.project_id, s.title, s.created_at, s.updated_at,
+		       (SELECT COUNT(*) FROM messages WHERE session_id = s.id) as message_count
+		FROM sessions s
+		INNER JOIN projects p ON s.project_id = p.id
+		WHERE s.project_id = $1 AND p.user_id = $2
+		ORDER BY s.updated_at DESC
 	`
 
-	rows, err := h.db.QueryContext(ctx, query, projectID)
+	rows, err := h.db.QueryContext(ctx, query, projectID, authContext.UserID)
 	if err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to query project sessions")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Failed to query project sessions")
 		apiErr := utils.NewInternalError("Failed to retrieve project sessions", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -437,13 +549,18 @@ func (h *ProjectHandler) GetProjectSessions(w http.ResponseWriter, r *http.Reque
 		var session models.Session
 		err := rows.Scan(
 			&session.ID,
+			&session.UserID,
+			&session.ProjectID,
 			&session.Title,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 			&session.MessageCount,
 		)
 		if err != nil {
-			logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to scan session row")
+			logger.Error().Err(err).
+				Str("project_id", projectID).
+				Str("user_id", authContext.UserID).
+				Msg("Failed to scan session row")
 			apiErr := utils.NewInternalError("Failed to process project sessions", r.URL.Path)
 			utils.WriteError(w, apiErr)
 			return
@@ -452,7 +569,10 @@ func (h *ProjectHandler) GetProjectSessions(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err = rows.Err(); err != nil {
-		logger.Error().Err(err).Str("project_id", projectID).Msg("Error iterating session rows")
+		logger.Error().Err(err).
+			Str("project_id", projectID).
+			Str("user_id", authContext.UserID).
+			Msg("Error iterating session rows")
 		apiErr := utils.NewInternalError("Failed to retrieve project sessions", r.URL.Path)
 		utils.WriteError(w, apiErr)
 		return
@@ -464,8 +584,33 @@ func (h *ProjectHandler) GetProjectSessions(w http.ResponseWriter, r *http.Reque
 
 	logger.Info().
 		Str("project_id", projectID).
+		Str("user_id", authContext.UserID).
 		Int("session_count", len(sessions)).
 		Msg("Project sessions retrieved successfully")
 
 	utils.WriteSuccess(w, response)
+}
+
+// verifyProjectOwnership checks if a project belongs to the specified user
+func (h *ProjectHandler) verifyProjectOwnership(projectID, userID string) utils.APIError {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var projectUserID string
+	err := h.db.QueryRowContext(ctx, "SELECT user_id FROM projects WHERE id = $1", projectID).Scan(&projectUserID)
+	if err != nil {
+		h.logger.Error().Err(err).Str("project_id", projectID).Msg("Failed to get project for ownership verification")
+		return utils.NewNotFoundError("Project not found", projectID)
+	}
+
+	if projectUserID != userID {
+		h.logger.Warn().
+			Str("project_id", projectID).
+			Str("user_id", userID).
+			Str("project_user_id", projectUserID).
+			Msg("User attempted to access project they don't own")
+		return utils.NewForbiddenError("Access denied to this project", projectID)
+	}
+
+	return utils.APIError{}
 }

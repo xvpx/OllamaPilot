@@ -10,6 +10,8 @@ require (
 	github.com/rs/zerolog v1.32.0
 	github.com/lib/pq v1.10.9
 	github.com/pgvector/pgvector-go v0.1.1
+	github.com/golang-jwt/jwt/v5 v5.2.0
+	golang.org/x/crypto v0.18.0
 )
 
 require (

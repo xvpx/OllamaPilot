@@ -45,6 +45,9 @@ services:
       - ENABLE_SEMANTIC_MEMORY=${ENABLE_SEMANTIC_MEMORY:-true}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
       - MAX_CONTEXT_RESULTS=${MAX_CONTEXT_RESULTS:-5}
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key-change-in-production-please-use-a-strong-random-key}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-24h}
+      - BCRYPT_COST=${BCRYPT_COST:-12}
     volumes:
       - ./web:/app/web:ro
     depends_on:
