@@ -29,7 +29,8 @@ class ChatApp {
         this.messageInput = document.getElementById('message-input');
         this.sendBtn = document.getElementById('send-btn');
         this.modelSelect = document.getElementById('model-select');
-        this.newChatBtn = document.getElementById('new-chat-btn');
+        // Logo replaced the new chat button - keeping reference for compatibility
+        this.newChatBtn = null;
         this.sidebar = document.getElementById('sidebar');
         this.sidebarToggleBtn = document.getElementById('sidebar-toggle');
         this.modelSelectorBtn = document.getElementById('model-selector-btn');
@@ -145,9 +146,8 @@ class ChatApp {
         if (this.sendBtn) {
             this.sendBtn.addEventListener('click', () => this.sendMessage());
         }
-        if (this.newChatBtn) {
-            this.newChatBtn.addEventListener('click', () => this.createNewSession());
-        }
+        // New chat button replaced with logo - functionality moved to other UI elements
+        // Users can create new sessions through other means
         if (this.sidebarToggleBtn) {
             this.sidebarToggleBtn.addEventListener('click', () => this.toggleSidebar());
         }
