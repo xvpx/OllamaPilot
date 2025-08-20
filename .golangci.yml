@@ -1,8 +1,9 @@
-version: "2"
-
 run:
   timeout: 5m
   tests: true
+
+output:
+  format: colored-line-number
 
 linters:
   enable:
@@ -11,3 +12,6 @@ linters:
     - ineffassign
     - unused
     - staticcheck
+
+issues:
+  exclude-use-default: false
