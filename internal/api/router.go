@@ -61,6 +61,9 @@ func (rt *Router) SetupRoutes() http.Handler {
 	r.Get("/app.js", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(workDir, "app.js"))
 	})
+	r.Get("/logo.png", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(workDir, "logo.png"))
+	})
 
 	// Health check handlers
 	healthHandler := handlers.NewHealthHandler(rt.db, rt.cfg, rt.logger)
